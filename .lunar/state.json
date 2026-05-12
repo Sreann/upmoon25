@@ -1,0 +1,8 @@
+[
+  {
+    "name": "dashboard",
+    "pid": 158,
+    "pgid": 158,
+    "cmd": "source /opt/ros/humble/setup.bash && streamlit run /workspace/lunar/src/lunar/dashboard/app.py --server.port 8501 --server.address 0.0.0.0 --logger.level info"
+  }
+]

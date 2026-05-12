@@ -1,0 +1,25 @@
+flowchart LR
+  %% Runtime: RUN_LAPTOP_RC.bash
+
+  subgraph RUN["RUN_LAPTOP_RC.bash"]
+    RVIZ[rviz2]
+    JOY[backend/joystick_driver]
+    BAG[ros2 bag record (optional)]
+  end
+
+  subgraph HW["Robot hardware drivers"]
+    DRIVE[drive_motors]
+    CONVEYOR[conveyor]
+    BUCKET[bucket_spin]
+    ARD[arduino_driver]
+  end
+
+  RVIZ -->|subscribes for visualization  - camera/TF/map - | ROS[ - ROS graph - ]
+  JOY -->|publishes cmd/velocity  - teleop drive -  to| DRIVE
+  JOY -->|publishes cmd/conveyor  - teleop -  to| CONVEYOR
+  JOY -->|publishes cmd/bucket_vel  - teleop -  to| BUCKET
+  JOY -->|publishes /cmd/bucket_pos  - teleop -  to| ARD
+  JOY -->|publishes /cmd/pan  - teleop camera pan -  to| ARD
+  JOY -->|publishes /cmd/camera_height  - teleop camera height -  to| ARD
+
+  BAG -->|records /odom /camera /depth /points  - rosbag capture -  to| ROS

@@ -1,0 +1,16 @@
+services:
+  ros:
+    build: .
+    container_name: upmoon25_ros
+    privileged: true
+    ports:
+      - "8501:8501"
+      - "8765:8765"
+    environment:
+      - ROS_DOMAIN_ID=25
+    volumes:
+      - .:/workspace
+      - /dev:/dev
+    stdin_open: true
+    tty: true
+    working_dir: /workspace

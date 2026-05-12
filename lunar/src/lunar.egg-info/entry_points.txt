@@ -1,0 +1,2 @@
+[console_scripts]
+lunar = lunar.cli:app

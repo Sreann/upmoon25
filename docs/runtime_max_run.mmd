@@ -1,0 +1,28 @@
+flowchart LR
+  %% Runtime: MAX_RUN.sh
+
+  subgraph RUN["MAX_RUN.sh"]
+    RVIZ[rviz2]
+    RGB_XPORT[backend/rgb_transport]
+    MAIN[backend/main_controller]
+  end
+
+  subgraph BE["Backend nodes (expected to be running)"]
+    MINER[mining_controller]
+    MOT[motion_controller]
+    MAP[global_mapper]
+    LOC[localizer]
+    HEAD[head_controller]
+  end
+
+  RGB_XPORT -->|subscribes /camera/rgb/image_compressed and publishes /camera/rgb/image_decompressed  - decompress RGB stream - | ROS[ - ROS graph - ]
+
+  MAIN -->|publishes /cmd/miner  - start/stop mining -  to| MINER
+  MAIN -->|publishes /cmd_mp  - motion controller mode -  to| MOT
+  MAIN -->|publishes /cmd_map  - mapping on/off -  to| MAP
+  MAIN -->|publishes /cmd_map_marker  - map debug markers -  to| MAP
+  MAIN -->|publishes /cmd_localizer  - localizer on/off -  to| LOC
+  MAIN -. calls find_tag  - request tag pose estimate -  .-> HEAD
+  MAIN -. calls goto  - drive to goal -  .-> MOT
+
+  RVIZ -->|subscribes for visualization  - camera/TF/map - | ROS

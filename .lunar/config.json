@@ -1,0 +1,7 @@
+{
+  "world_path": "/workspace/gz_worlds/arena1.world",
+  "port": 8765,
+  "headless": false,
+  "bridge_cmd": "ros2 run foxglove_bridge foxglove_bridge",
+  "domain_id": 25
+}

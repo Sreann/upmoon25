@@ -1,0 +1,145 @@
+flowchart LR
+  %% Legend
+  %% Solid arrows = Topic publish -> subscribe
+  %% Dotted arrows = Service client -> server
+  %% Edge labels include a short natural-language description
+
+  subgraph HW["Hardware / Sensors / Sim"]
+    RGB[RGB Camera]
+    DEPTH[Depth Sensor]
+    T265[T265 Odometry]
+    IR[IR Sensor]
+    BUCK_ALARM[Bucket Alarm]
+    MOTORS[Drive Motors]
+    CONVEYOR_HW[Conveyor Motor]
+    BUCKET_HW[Bucket Motor]
+    PAN_SERVO[Camera Pan Servo]
+  end
+
+  subgraph JETSON["Jetson - robot compute"]
+    subgraph JETSON_FE["Frontend drivers - hardware IO"]
+      RGB_DRV[rgb_driver\npkg: frontend\nsubsystem: perception IO]
+      DEPTH_DRV[depth_driver\npkg: frontend\nsubsystem: perception IO]
+      T265_DRV[t265_driver\npkg: frontend\nsubsystem: state IO]
+      ARD[arduino_driver\npkg: frontend\nsubsystem: IO bridge]
+      DRIVE[drive_motors\npkg: frontend\nsubsystem: actuation]
+      CONVEYOR[conveyor\npkg: frontend\nsubsystem: actuation]
+      BUCKET[bucket_spin\npkg: frontend\nsubsystem: actuation]
+      BUCK_ALARM_NODE[bucket_alarm\npkg: frontend\nsubsystem: sensor]
+    end
+
+    subgraph JETSON_BE["Backend nodes on robot"]
+      TAG_DET[tag_detector\npkg: backend\nsubsystem: perception\nnote: launch files sometimes reference frontend]
+      MINER[mining_controller\npkg: backend\nsubsystem: autonomy\nnote: also exported by frontend setup]
+    end
+  end
+
+  subgraph RC["RC laptop"]
+    JOY[joystick_driver\npkg: backend\nsubsystem: teleop]
+    RVIZ_RC[rviz2\nsubsystem: visualization]
+  end
+
+  subgraph AUTO["Autonomy laptop"]
+    MAIN[main_controller\npkg: backend\nsubsystem: autonomy]
+    MOT[motion_controller\npkg: backend\nsubsystem: control]
+    PLAN[path_planner\npkg: backend\nsubsystem: planning]
+    MAP[global_mapper\npkg: backend\nsubsystem: mapping]
+    COST[global_costmapper\npkg: backend\nsubsystem: mapping]
+    LOC[localizer\npkg: backend\nsubsystem: localization]
+    HEAD[head_controller\npkg: backend\nsubsystem: perception]
+    RGB_XPORT[rgb_transport\npkg: backend\nsubsystem: perception utils]
+    IMG_SAVE[image_saver\npkg: backend\nsubsystem: debug]
+    RVIZ_AUTO[rviz2\nsubsystem: visualization]
+  end
+
+  subgraph ROS["ROS / TF / Sim"]
+    RSP[robot_state_publisher\nsubsystem: TF]
+    TF_STATIC[static_transform_publisher\nsubsystem: TF]
+    GZ[gazebo_ros + spawn_entity\nsubsystem: simulation]
+  end
+
+  %% Sensors -> Frontend
+  RGB -->|publishes /camera/rgb/image_raw - raw RGB frames to| RGB_DRV
+  RGB -->|publishes /camera/rgb/image_compressed - compressed frames to| RGB_DRV
+  RGB -->|publishes /camera/rgb/camera_info - camera intrinsics to| RGB_DRV
+  DEPTH -->|publishes raw depth - point cloud source to| DEPTH_DRV
+  T265 -->|publishes odometry - tracking pose estimate to| T265_DRV
+  IR -->|streams IR data - Arduino sensor to| ARD
+  BUCK_ALARM -->|streams alarm signal - jam or limit to| BUCK_ALARM_NODE
+
+  %% Frontend publishers
+  RGB_DRV -->|publishes /camera/rgb/image_raw - frames for tag search to| HEAD
+  RGB_DRV -->|publishes /camera/rgb/image_raw - camera test frames to| IMG_SAVE
+  RGB_DRV -->|publishes /camera/rgb/image_compressed - tag detection stream to| TAG_DET
+  RGB_DRV -->|publishes /camera/rgb/camera_info - intrinsics for pose to| TAG_DET
+  RGB_DRV -->|publishes /camera/rgb/camera_info - intrinsics for pose to| HEAD
+
+  DEPTH_DRV -->|publishes /camera/depth/points - mapping input to| MAP
+  MAIN -->|publishes /cmd/pointcloud - on-demand depth toggle to| DEPTH_DRV
+
+  T265_DRV -->|publishes /odom - pose for localizer to| LOC
+  T265_DRV -->|publishes /odom - pose for planner to| PLAN
+  T265_DRV -->|publishes /odom - pose for motion to| MOT
+
+  ARD -->|publishes /sensor/ir - mining state input to| MINER
+  ARD -->|publishes /camera/rgb/pan - pan feedback to| HEAD
+  ARD -->|publishes /joint_states - TF source to| RSP
+
+  BUCK_ALARM_NODE -->|publishes /sensor/bucket_alarm - alarm input to| MINER
+
+  %% Commands to hardware drivers
+  JOY -->|publishes cmd/velocity - teleop drive to| DRIVE
+  MINER -->|publishes cmd/velocity - autonomous drive to| DRIVE
+  MOT -->|publishes /cmd/velocity - path following to| DRIVE
+
+  JOY -->|publishes cmd/conveyor - teleop to| CONVEYOR
+  MINER -->|publishes cmd/conveyor - autonomy to| CONVEYOR
+
+  JOY -->|publishes cmd/bucket_vel - teleop to| BUCKET
+  MINER -->|publishes cmd/bucket_vel - autonomy to| BUCKET
+
+  JOY -->|publishes /cmd/pan - teleop pan to| ARD
+  HEAD -->|publishes /cmd/pan - auto tag search pan to| ARD
+
+  JOY -->|publishes /cmd/camera_height - teleop to| ARD
+  JOY -->|publishes /cmd/bucket_pos - teleop to| ARD
+  MINER -->|publishes /cmd/bucket_pos - autonomy to| ARD
+
+  %% Backend perception
+  TAG_DET -->|publishes /camera/rgb/tag_pose - detected tag pose to| MINER
+  HEAD -->|publishes /debug/tag_pose - debug only to| DEBUG_SINK
+
+  %% Mapping & Planning
+  MAP -->|publishes /map/global - occupancy grid to| COST
+  MAP -->|publishes /map/global_updates - incremental updates to| COST
+  COST -->|publishes map/global_costmap - planner input to| PLAN
+  PLAN -->|publishes path/path - planned path to| MOT
+  MOT -->|publishes path/goal - goal requests to| PLAN
+  MOT -->|publishes /cmd/velocity - final drive cmd to| DRIVE
+
+  %% High-level control
+  MAIN -->|publishes /cmd/miner - start or stop mining to| MINER
+  MAIN -->|publishes /cmd_mp - motion controller mode or abort to| MOT
+  MAIN -->|publishes /cmd_map - mapper on or off to| MAP
+  MAIN -->|publishes /cmd_map_marker - map debug markers to| MAP
+  MAIN -->|publishes /cmd_localizer - localizer on or off to| LOC
+
+  LOC -->|publishes /robo_z - robot height for mapping to| MAP
+  LOC -->|publishes /odom_true - refined odometry no subscriber found to| ODOM_TRUE_SINK
+
+  %% Services
+  MAIN -. calls find_tag - request tag pose estimate .-> HEAD
+  LOC -. calls find_tag - tag based pose for localization .-> HEAD
+  MAIN -. calls goto - request drive to goal .-> MOT
+
+  %% TF / Sim
+  RSP -->|publishes /tf - TF tree from URDF and joints to| TF_SINK
+  TF_STATIC -->|publishes /tf_static - static frames to| TF_STATIC_SINK
+  GZ -->|publishes sim world - Gazebo physics and sensors to| SIM_SINK
+
+  %% Sinks
+  DEBUG_SINK["debug consumers"]
+  ODOM_TRUE_SINK["no subscriber found"]
+  TF_SINK["TF consumers"]
+  TF_STATIC_SINK["TF static consumers"]
+  SIM_SINK["sim consumers"]

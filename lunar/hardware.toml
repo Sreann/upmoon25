@@ -1,0 +1,143 @@
+# upmoon25-auto: Peripheral Hardware Enumeration
+# -----------------------------------------------------------------
+# This file serves as the Single Source of Truth for all hardware dependencies, 
+# drivers, and device communication parameters used across the project.
+#
+# USAGE IN CODE:
+# These values should eventually be loaded by the 'lunar' CLI or ROS nodes
+# to replace hardcoded values found in the 'frontend' package.
+
+[metadata]
+config_version = "1.1.0"
+description = "Centralized hardware registry for sensors, actuators, and drivers."
+target_platform = "NVIDIA Jetson (for physical ops) / Linux (for simulation)"
+
+[electrical_constraints]
+main_bus_voltage = "24V (6S LiPo)"
+logic_rail_voltage = "5.0V / 3.3V"
+peak_current_limit = "60A"
+thermal_throttle_cpu = "85C"
+thermal_throttle_gpu = "90C"
+
+[vision.tracking_camera]
+model = "Intel RealSense T265"
+purpose = "High-precision V-SLAM Odometry"
+driver_lib = "pyrealsense2"
+ros_topics = ["/odom", "/camera/tracking/image_compressed"]
+status = "Critical"
+usb_speed_required = "USB 2.1+"
+max_cable_length = "1.0m"
+notes = "Does not provide internal covariance. Library requires specific installation steps on Jetson."
+
+[vision.rgb_camera]
+model = "Intel RealSense D435 RGB"
+purpose = "Live operator RGB feed"
+driver_lib = "pyrealsense2"
+ros_topics = ["/camera/rgb/image_compressed", "/camera/rgb/image_raw"]
+resolution = "640x480"
+frame_rate = 30
+usb_speed_required = "USB 3.2 Gen 1"
+notes = "Mounted on the pan/tilt camera head for driver visibility and tag workflows."
+
+[vision.rear_camera]
+model = "Intel RealSense D435 RGB"
+purpose = "Rear operator RGB feed"
+driver_lib = "pyrealsense2"
+ros_topics = ["/camera/rear/image_compressed", "/camera/rear/image_raw"]
+resolution = "640x480"
+frame_rate = 30
+usb_speed_required = "USB 3.2 Gen 1"
+notes = "Rear-facing D435 used as the secondary RGB camera."
+
+[actuation.drive_train]
+controller = "Sabertooth 2x32 Motor Controller"
+driver_lib = "pysabertooth"
+communication = "Serial (USB-to-TTL)"
+baud_rate = 9600
+address = 128
+timeout = 0.1
+continuous_current_rating = "32A per channel"
+peak_current_rating = "64A per channel"
+
+    [actuation.drive_train.left]
+    primary_device_path = "/dev/ttyACM0"
+    backup_device_path = "/dev/ttyUSB0"
+    purpose = "Control left-side drive motors"
+
+    [actuation.drive_train.right]
+    primary_device_path = "/dev/ttyACM1"
+    backup_device_path = "/dev/ttyUSB1"
+    purpose = "Control right-side drive motors"
+
+[actuation.mining_mechanism]
+    [actuation.mining_mechanism.spin]
+    controller = "Modbus-capable Motor Driver"
+    protocol = "Modbus RTU over Serial"
+    device_path = "/dev/ttyUSB0"
+    driver_lib = "pymodbus"
+    speed_factor = 30
+    notes = "Used for rotating the mining bucket assembly."
+
+    [actuation.mining_mechanism.linear]
+    driver_lib = "Jetson.GPIO"
+    platform_lock = "NVIDIA Jetson"
+    purpose = "Linear actuators for bucket height/angle"
+    notes = "Hard-locked to Jetson hardware. Requires mock wrapper for simulation testing."
+
+[actuation.gpio_pins]
+# These mappings are derived from PWM_pins.txt and active driver files
+# Frame of reference: NVIDIA Jetson Nano/TX2/Xavier header
+actuator_1 = 33
+actuator_2 = 32
+alarm_buzzer = 18
+conveyor_toggle = 12
+
+[microcontrollers.arduino]
+model = "Arduino Uno (or compatible)"
+purpose = "Auxiliary sensor gathering and low-level logic"
+driver_lib = "pyserial"
+device_path = "/dev/ttyACM0"
+baud_rate = 115200
+
+    [microcontrollers.arduino.identification]
+    vendor_id = "2341" # Hex for Arduino LLC
+    product_id = "0043" # Hex for Uno R3
+    notes = "Used by lunar/arduino_driver.py for automated port discovery."
+
+[sensors.ir_array]
+model = "Analog IR Distance Sensors"
+purpose = "Short-range obstacle detection and docking"
+connection = "Arduino Analog Pins (A0, A1)"
+ros_topic = "/sensor/ir"
+notes = "Data is smoothed by arduino_driver before publishing."
+
+[actuation.camera_pan]
+model = "Standard PWM Servo"
+purpose = "Horizontal panning for RGB-D camera"
+connection = "Arduino Pin 9"
+ros_topic = "/camera/rgb/pan"
+command_topic = "/cmd/pan"
+
+[actuation.bucket_alarm]
+model = "Active Piezo Buzzer"
+purpose = "Audible warning for bucket movement or faults"
+connection = "Jetson GPIO Pin 18"
+notes = "Triggered via sysfs or Jetson.GPIO library."
+
+[actuation.conveyor_motor]
+model = "DC Motor / Toggle Controller"
+purpose = "Move material from collection to storage"
+connection = "Jetson GPIO Pin 12"
+notes = "Simple ON/OFF toggle logic."
+
+[system.python_dependencies]
+# Required libraries for hardware communication
+serial = "pyserial: Basic RS232/TTL communication"
+pyrealsense2 = "Intel RealSense SDK 2.0 Python wrapper"
+pysabertooth = "Custom driver for Dimension Engineering Sabertooth controllers"
+pymodbus = "Modbus protocol implementation"
+Jetson_GPIO = "GPIO control library for NVIDIA Jetson devices"
+pyapriltags = "AprilTag fiducial marker detection"
+opencv_python = "cv2: Image processing and matrix math"
+scipy = "Advanced interpolation and spatial transforms"
+numpy = "Array processing and linear algebra (Pinned to <2.0.0)"

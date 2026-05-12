@@ -1,0 +1,39 @@
+flowchart LR
+  %% Runtime: RUN_ROBOT.bash
+  %% Launches: ros2 launch frontend comp_launch.py
+
+  subgraph RUN["RUN_ROBOT.bash"]
+    COMP[frontend/comp_launch.py]
+  end
+
+  subgraph FE["Frontend nodes"]
+    DRIVE[drive_motors]
+    ARD[arduino_driver]
+    RGB_DRV[rgb_driver]
+    CONVEYOR[conveyor]
+    BUCKET[bucket_spin]
+    T265[t265_driver]
+    DEPTH[depth_driver]
+  end
+
+  subgraph BE["Backend nodes"]
+    TAG_DET[tag_detector]
+    MINER[mining_controller]
+  end
+
+  subgraph ROS["ROS / TF"]
+    RSP[robot_state_publisher]
+    TF_STATIC[static_transform_publisher]
+  end
+
+  COMP -->|launches  - publishes TF from URDF + joints - | RSP
+  COMP -->|launches  - motor driver for cmd/velocity - | DRIVE
+  COMP -->|launches  - ROS <-> Arduino bridge - | ARD
+  COMP -->|launches  - RGB camera driver - | RGB_DRV
+  COMP -->|launches  - conveyor motor control - | CONVEYOR
+  COMP -->|launches  - bucket motor control - | BUCKET
+  COMP -->|launches  - publishes /odom pose - | T265
+  COMP -->|launches  - publishes /camera/depth/points - | DEPTH
+  COMP -->|launches  - AprilTag detection - | TAG_DET
+  COMP -->|launches  - mining behavior state machine - | MINER
+  COMP -->|launches  - static map/odom TF frames - | TF_STATIC
