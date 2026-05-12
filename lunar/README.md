@@ -1,37 +1,47 @@
 # lunar
 
-Unified cli for this project.
+Unified CLI for this workspace (simulation, operator UIs, ROS helpers).
 
 ## Quick start
 
 ```bash
-uv venv
+cd lunar
+uv sync
 uv pip install -e .
 
-# run sim + web bridge
-lunar sim --world ../gz_worlds/arena1.world --port 8765
+# Simulation + Foxglove (from repo root)
+uv run lunar sim --world ../gz_worlds/arena1.world --port 8765
 ```
 
-## Commands
+## Operator UIs
 
-- `lunar sim` - start Gazebo sim + Foxglove bridge
-- `lunar doctor` - quick environment checks
-- `lunar env` - show effective config + ROS env
-- `lunar topics` - run `ros2 topic list`
-- `lunar act` - send focused robot actuator commands without full `ros2 topic pub` syntax
-- `lunar kill` - stop processes started by `lunar sim`
-- `lunar config` - show or set config values
+| Command | What it runs |
+|---------|----------------|
+| **`lunar dashboard`** | React **mission-control** (Vite dev server). Default **port 8501**, background by default. |
+| **`lunar mission-control`** | Same app; explicit name. |
+| **`lunar streamlit-dashboard`** | Legacy **Streamlit** Command Center + camera WebSocket helper (default port 8501 for Streamlit). |
+| **`lunar mission-bridge`** | Safe WebSocket bridge for mission-control telemetry/commands. |
 
-## Dashboard Teleop
+## ROS / robot helpers
 
-The Streamlit dashboard `Command Center` now exposes robot teleop controls for:
+- **`lunar check`** — Health / environment audit (replaces older `lunar doctor` references).
+- **`lunar env`** / **`lunar shell-env`** — Config and exportable env.
+- **`lunar topics`** — `ros2 topic list`.
+- **`lunar act`** — Shortcuts for actuator / drive topics.
+- **`lunar keyboard`** — Terminal teleop (Textual TUI on robot).
+- **`lunar autonomy-stack`** — Shadow perception + terrain + flags + autonomy supervisor (no autonomous drive by default).
+- **`lunar kill`** — Stop tracked background processes.
 
-- drive velocity with press-and-hold buttons
-- conveyor toggle
-- bucket chain forward and reverse with press-and-hold buttons
-- bucket position
-- camera height
-- camera pan with press-and-hold buttons
-- emergency stop
+## Quality (from **repo root**)
 
-Drive, pan, and bucket-chain hold controls use a browser heartbeat plus a ROS-side watchdog so commands stop if the page loses focus or the connection drops.
+```bash
+make test    # lint + offline Python tests + mission-control eslint
+make ci      # same + production Vite build
+make tune-flags input=field_photos/in output=field_photos/out
+```
+
+Arena photos: drop images under `field_photos/in` (gitignored by default), run **`make tune-flags`**, review overlays and `field_photos/out/results.jsonl`.
+
+## Dashboard teleop (Streamlit)
+
+The Streamlit **Command Center** (`lunar streamlit-dashboard`) supports hold-to-drive, conveyor, bucket chain, camera pan/height, and E-stop with browser heartbeat + ROS-side watchdog.

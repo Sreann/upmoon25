@@ -2,11 +2,8 @@ import launch
 import os
 import xacro
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import ThisLaunchFileDir, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
-from launch.event_handlers import OnProcessExit
 
 
 from launch_ros.actions import Node

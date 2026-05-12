@@ -18,3 +18,9 @@ log
 src/sensor/build
 
 rosbag*
+
+# Local arena / field samples (keep out of git unless you commit intentionally)
+field_photos/
+
+# Lunar local runtime logs
+.lunar/dashboard.log

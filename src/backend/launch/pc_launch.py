@@ -2,11 +2,6 @@ import launch
 import os
 import xacro
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import ThisLaunchFileDir, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
-from launch.event_handlers import OnProcessExit
 
 
 from launch_ros.actions import Node
@@ -64,19 +59,19 @@ def generate_launch_description():
         }]
     )
 
-    costmapper = Node(
+    Node(
         package='backend',
         executable='global_costmapper',
         output='screen',
     )
 
-    path_planner = Node(
+    Node(
         package='backend',
         executable='path_planner',
         output='screen',
     )
 
-    motion_controller = Node(
+    Node(
         package='backend',
         executable='motion_controller',
         output='screen',

@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+skills/
+.claude/
+.skill-runs.log
+
+# Testing artifacts
+.coverage
+coverage.xml
+htmlcov/
+.hypothesis/
+.pytest_cache/
+.mypy_cache/

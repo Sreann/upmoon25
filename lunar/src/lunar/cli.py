@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import select
+import signal
 import shlex
 import shutil
 import subprocess
@@ -19,6 +20,7 @@ import typer
 import serial.tools.list_ports
 
 from .config import Config, CONFIG_PATH, find_repo_root
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS
 from .process import spawn, save_state, kill_all
 
 app = typer.Typer(add_completion=False)
@@ -295,6 +297,13 @@ def _force_cleanup_runtime_processes() -> list[str]:
         "[c]amera_ws.py",
         "[l]unar_camera_ws_bridge",
         "[l]unar_dashboard_bridge",
+        "[l]unar_mission_control_bridge",
+        "[p]npm dev --host .* --port",
+        "[m]ission_bridge",
+        "[p]erception_health",
+        "[l]ocal_terrain_grid",
+        "[f]lag_detector",
+        "[a]utonomy_supervisor",
     ]
     for pattern in targeted_patterns:
         subprocess.run(["pkill", "-9", "-f", pattern], stderr=subprocess.DEVNULL)
@@ -548,11 +557,12 @@ def _run_terminal_subsystem_keyboard(
         created_context = True
 
     node = Node("lunar_terminal_keyboard")
-    pub_cam_height = node.create_publisher(Int16, "/cmd/camera_height", 10)
-    pub_pan = node.create_publisher(Int16, "/cmd/pan", 10)
-    pub_bucket_pos = node.create_publisher(Int16, "/cmd/bucket_pos", 10)
-    pub_bucket_vel = node.create_publisher(Int16, "/cmd/bucket_vel", 10)
-    pub_conveyor = node.create_publisher(Int16, "/cmd/conveyor", 10)
+    _kt = KEYBOARD_PUBLISHER_TOPICS
+    pub_cam_height = node.create_publisher(Int16, _kt["camera-height"], 10)
+    pub_pan = node.create_publisher(Int16, _kt["pan"], 10)
+    pub_bucket_pos = node.create_publisher(Int16, _kt["bucket-pos"], 10)
+    pub_bucket_vel = node.create_publisher(Int16, _kt["bucket-vel"], 10)
+    pub_conveyor = node.create_publisher(Int16, _kt["conveyor"], 10)
 
     arduino = _PersistentArduinoWriter() if direct_serial else None
     direct_ready = bool(arduino and arduino.open())
@@ -752,8 +762,10 @@ def sim(
     subprocess.run(["pkill", "-9", "gzserver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-9", "Xvfb"], stderr=subprocess.DEVNULL)
     if Path("/tmp/.X99-lock").exists():
-        try: Path("/tmp/.X99-lock").unlink()
-        except: pass
+        try:
+            Path("/tmp/.X99-lock").unlink()
+        except OSError:
+            pass
 
     # Handle world file selection
     world_file = Path(world_path).expanduser()
@@ -795,7 +807,7 @@ def sim(
     world_path = str(world_file)
     
     gz_cmd = f"gzserver {world_path} -slibgazebo_ros_init.so -slibgazebo_ros_factory.so -slibgazebo_ros_force_system.so -slibgazebo_ros_state.so"
-    launch_cmd = f"ros2 launch backend sim_launch.py"
+    launch_cmd = "ros2 launch backend sim_launch.py"
     spawn_cmd = "ros2 run gazebo_ros spawn_entity.py -topic robot_description -entity my_bot -z 0.5 -timeout 60"
     
     if use_headless:
@@ -840,7 +852,7 @@ def sim(
     save_state(procs)
 
     if not json_out:
-        typer.echo(f"Simulation active.")
+        typer.echo("Simulation active.")
         typer.echo(f"Foxglove: http://localhost:{bridge_port}")
         typer.echo("Run 'lunar check' to verify status.")
 
@@ -1095,21 +1107,23 @@ def act(
         drive_topic = resolve_control_topic(control_target)
         typer.echo(f"Stopping drive, bucket, conveyor, and pan on {drive_topic} and robot actuator topics...")
         _publish_twist(drive_topic, 0.0, 0.0, duration=max(duration, 0.2), rate=max(1, rate))
-        _publish_once("/cmd/bucket_vel", "std_msgs/msg/Int16", 0)
-        _publish_once("/cmd/conveyor", "std_msgs/msg/Int16", 0)
-        _publish_once("/cmd/pan", "std_msgs/msg/Int16", 0)
+        kt = KEYBOARD_PUBLISHER_TOPICS
+        _publish_once(kt["bucket-vel"], "std_msgs/msg/Int16", 0)
+        _publish_once(kt["conveyor"], "std_msgs/msg/Int16", 0)
+        _publish_once(kt["pan"], "std_msgs/msg/Int16", 0)
         return
 
     if value is None:
         typer.secho("--value is required for this actuator.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=2)
 
+    kt = KEYBOARD_PUBLISHER_TOPICS
     topic_map = {
-        Actuator.BUCKET_VEL: ("/cmd/bucket_vel", "std_msgs/msg/Int16"),
-        Actuator.BUCKET_POS: ("/cmd/bucket_pos", "std_msgs/msg/Int16"),
-        Actuator.CONVEYOR: ("/cmd/conveyor", "std_msgs/msg/Int16"),
-        Actuator.CAMERA_HEIGHT: ("/cmd/camera_height", "std_msgs/msg/Int16"),
-        Actuator.PAN: ("/cmd/pan", "std_msgs/msg/Int16"),
+        Actuator.BUCKET_VEL: (kt["bucket-vel"], "std_msgs/msg/Int16"),
+        Actuator.BUCKET_POS: (kt["bucket-pos"], "std_msgs/msg/Int16"),
+        Actuator.CONVEYOR: (kt["conveyor"], "std_msgs/msg/Int16"),
+        Actuator.CAMERA_HEIGHT: (kt["camera-height"], "std_msgs/msg/Int16"),
+        Actuator.PAN: (kt["pan"], "std_msgs/msg/Int16"),
     }
     topic, msg_type = topic_map[actuator]
 
@@ -1181,17 +1195,21 @@ def lint():
     1. **ty check**: Validates Python type hints and basic syntax.
     2. **ruff check**: A fast, comprehensive linter for PEP8 compliance and bug detection.
     \n
-    It scans both the ROS packages in src/ and the lunar CLI source code.
+    It scans `src/backend` and `lunar/src` (see repo-root `pyproject.toml` for excludes).
     """
     root = find_repo_root()
-    
+    ty_python = root / "lunar" / ".venv" / "bin" / "python"
+    ty_cmd = ["uvx", "ty", "check", "src/backend", "lunar/src"]
+    if ty_python.exists():
+        ty_cmd.extend(["--python", str(ty_python)])
+
     typer.secho("--- Running 'ty check' ---", fg=typer.colors.CYAN, bold=True)
-    res_ty = subprocess.run(["uvx", "ty", "check"], cwd=str(root))
-    
+    res_ty = subprocess.run(ty_cmd, cwd=str(root))
+
     typer.echo("")
-    
+
     typer.secho("--- Running 'ruff check' ---", fg=typer.colors.CYAN, bold=True)
-    res_ruff = subprocess.run(["uvx", "ruff", "check", "."], cwd=str(root))
+    res_ruff = subprocess.run(["uvx", "ruff", "check", "src/backend", "lunar/src"], cwd=str(root))
 
     if res_ty.returncode == 0 and res_ruff.returncode == 0:
         typer.secho("\n✨ All lint checks passed!", fg=typer.colors.GREEN, bold=True)
@@ -1225,9 +1243,11 @@ def build(
 
     if clean:
         if Path("/tmp/.X99-lock").exists():
-            try: Path("/tmp/.X99-lock").unlink()
-            except: pass
-        
+            try:
+                Path("/tmp/.X99-lock").unlink()
+            except OSError:
+                pass
+
         typer.echo("Cleaning stale build...")
         for d in ["build", "install", "log"]:
             path = root / d
@@ -1374,7 +1394,8 @@ def check(
                 temps.append(f"{t:.1f}C")
         if temps:
             results["system_health"]["cpu_temp"] = " / ".join(temps)
-    except: pass
+    except Exception:
+        pass
 
     import concurrent.futures
     try:
@@ -1385,7 +1406,7 @@ def check(
     def run_cmd(cmd, timeout=2.0):
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
-        except:
+        except (subprocess.TimeoutExpired, OSError):
             return ""
 
     # --- Hardware Checks ---
@@ -1523,8 +1544,10 @@ def check(
                 for lib, desc in hw_data["system"]["python_dependencies"].items():
                     # Handle mapping from toml key to actual import name if needed (e.g. opencv_python -> cv2)
                     import_name = lib
-                    if lib == "opencv_python": import_name = "cv2"
-                    if lib == "Jetson_GPIO": import_name = "Jetson.GPIO"
+                    if lib == "opencv_python":
+                        import_name = "cv2"
+                    if lib == "Jetson_GPIO":
+                        import_name = "Jetson.GPIO"
 
                     if lib == "pyrealsense2":
                         found = realsense["driver_ok"]
@@ -1607,7 +1630,11 @@ def check(
     if log_path.exists():
         with open(log_path, "r") as f:
             lines = f.readlines()
-            results["recent_errors"] = [l.strip() for l in lines if "ERROR" in l.upper() or "process has died" in l.upper()][-8:]
+            results["recent_errors"] = [
+                line.strip()
+                for line in lines
+                if "ERROR" in line.upper() or "process has died" in line.upper()
+            ][-8:]
 
     if json_out:
         typer.echo(json.dumps(results, indent=2))
@@ -1707,9 +1734,9 @@ def check(
 
     typer.echo("\n[Recent Errors/Warnings]")
     if results["recent_errors"]:
-        for l in results["recent_errors"]:
-            color = typer.colors.RED if "ERROR" in l.upper() or "died" in l.upper() else typer.colors.YELLOW
-            typer.secho(f"  {l}", fg=color)
+        for err_line in results["recent_errors"]:
+            color = typer.colors.RED if "ERROR" in err_line.upper() or "died" in err_line.upper() else typer.colors.YELLOW
+            typer.secho(f"  {err_line}", fg=color)
     else:
         typer.secho("  No critical errors found in log.", fg=typer.colors.GREEN)
 
@@ -1720,7 +1747,8 @@ def check(
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             while True:
                 line = proc.stdout.readline()
-                if not line: break
+                if not line:
+                    break
                 if any(x in line for x in ["level: 30", "level: 40", "level: 50"]):
                     typer.secho(line.strip(), fg=typer.colors.YELLOW if "30" in line else typer.colors.RED)
         except KeyboardInterrupt:
@@ -1885,37 +1913,187 @@ def config(
 
 
 @app.command()
-def dashboard(
-    port: int = typer.Option(8501, help="Port to run the dashboard on."),
-    host: str = typer.Option("0.0.0.0", help="Host to bind to."),
-    background: bool = typer.Option(True, "--foreground/--background", help="Run the dashboard in the background (default) or foreground."),
+def autonomy_stack(
+    grid_preset: str = typer.Option("standard", "--grid-preset", help="Terrain grid preset: coarse, standard, or fine."),
+    foreground: bool = typer.Option(False, "--foreground", help="Print startup status but keep nodes tracked in the background."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be launched."),
 ):
     """
-    Launch the 'Lunar Mission Control' web dashboard.
+    Launch the shadow-mode perception and autonomy stack.
 
-    This starts a Streamlit server that connects to the ROS 2 network
-    and provides real-time telemetry, hardware monitoring, and control.
+    This starts perception health, local terrain grid, flag detection, and the
+    autonomy supervisor. The supervisor runs with autonomous motion disabled.
+    """
+    root = find_repo_root()
+    log_path = root / ".lunar" / "autonomy_stack.log"
+    ensure_env(force=True)
+
+    cmds = [
+        ("perception_health", "ros2 run backend perception_health"),
+        ("local_terrain_grid", f"ros2 run backend local_terrain_grid --ros-args -p grid_preset:={shlex.quote(grid_preset)}"),
+        ("flag_detector", "ros2 run backend flag_detector"),
+        ("autonomy_supervisor", "ros2 run backend autonomy_supervisor --ros-args -p allow_motion:=false"),
+    ]
+
+    if dry_run:
+        for name, cmd in cmds:
+            typer.echo(f"[{name}] {cmd}")
+        return
+
+    log_path.parent.mkdir(exist_ok=True)
+    log_path.write_text(f"--- Shadow autonomy stack started at {time.ctime()} ---\n")
+
+    procs = []
+    for name, cmd in cmds:
+        typer.echo(f"Starting {name}...")
+        procs.append(spawn(name, cmd, log_file=log_path))
+        time.sleep(0.3)
+
+    save_state(procs)
+    typer.echo("Shadow autonomy stack running with autonomous motion disabled.")
+    typer.echo(f"Logs: {log_path}")
+    typer.echo("Run 'lunar kill' to stop.")
+
+    if foreground:
+        typer.echo("Foreground log streaming is not implemented for this command yet; use 'lunar logs'.")
+
+
+def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_name: str) -> None:
+    """Run the React/Vite mission-control dev server (shared by `dashboard` and `mission-control`)."""
+    root = find_repo_root()
+    app_dir = root / "lunar" / "mission-control"
+    log_path = root / ".lunar" / f"{log_name}.log"
+
+    if not app_dir.exists():
+        typer.secho(f"Error: mission-control app not found at {app_dir}", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if shutil.which("pnpm") is None:
+        typer.secho("Error: pnpm is required to run the mission-control app.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    cmd = f"cd {shlex.quote(str(app_dir))} && pnpm dev --host {shlex.quote(host)} --port {int(port)}"
+    typer.secho(f"Launching mission control on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
+
+    if background:
+        proc = spawn("mission_control", cmd, log_file=log_path)
+        save_state([proc])
+        typer.echo(f"Mission control running in background. Logs: {log_path}")
+        typer.echo("Run 'lunar kill' to stop tracked background processes.")
+        return
+
+    try:
+        subprocess.run(cmd, shell=True, executable="/bin/bash", check=True)
+    except KeyboardInterrupt:
+        typer.secho("\nMission control stopped.", fg=typer.colors.YELLOW)
+    except subprocess.CalledProcessError as e:
+        typer.secho(f"Mission control failed with exit code {e.returncode}", fg=typer.colors.RED)
+
+
+@app.command()
+def mission_control(
+    port: int = typer.Option(8501, help="Port for the Vite mission-control dev server."),
+    host: str = typer.Option("0.0.0.0", help="Host to bind to."),
+    background: bool = typer.Option(False, "--background/--foreground", help="Run in the background or foreground."),
+):
+    """
+    Launch the React mission-control dashboard (Vite dev server).
+
+    Same app as `lunar dashboard`; use this command if you prefer the explicit name.
+    """
+    _launch_vite_mission_control(port=port, host=host, background=background, log_name="mission_control")
+
+
+@app.command()
+def mission_bridge(
+    port: int = typer.Option(8770, help="Port for the mission-control telemetry WebSocket."),
+    host: str = typer.Option("0.0.0.0", help="Host to bind to."),
+    background: bool = typer.Option(False, "--background/--foreground", help="Run in the background or foreground (default)."),
+):
+    """
+    Launch the safe-command WebSocket bridge for the new mission-control app.
+
+    The bridge streams the typed MissionControlSnapshot contract to
+    /mission/ws. It accepts only ESTOP, pause, manual takeover, drive stop,
+    and zone marking until the full robot-side watchdog exists.
+    """
+    root = find_repo_root()
+    log_path = root / ".lunar" / "mission_bridge.log"
+    package_root = root / "lunar" / "src"
+
+    ensure_env(force=True)
+
+    cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
+    ros_setup = _detect_ros_setup_script()
+    workspace_setup = root / "install" / "setup.bash"
+    if ros_setup and ros_setup.exists():
+        cmd_parts.append(f"source {ros_setup}")
+    if workspace_setup.exists():
+        cmd_parts.append(f"source {workspace_setup}")
+    cmd_parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
+    cmd_parts.append(
+        f"{sys.executable} -c \"from lunar.mission_bridge import main; main(port={int(port)}, host={host!r})\""
+    )
+    cmd = " && ".join(cmd_parts)
+
+    typer.secho(f"Launching mission bridge on ws://{host}:{port}/mission/ws", fg=typer.colors.GREEN, bold=True)
+    if background:
+        proc = spawn("mission_bridge", cmd, log_file=log_path)
+        save_state([proc])
+        typer.echo(f"Mission bridge running in background. Logs: {log_path}")
+        typer.echo("Run 'lunar kill' to stop.")
+        return
+
+    try:
+        subprocess.run(cmd, shell=True, executable="/bin/bash", check=True)
+    except KeyboardInterrupt:
+        typer.secho("\nMission bridge stopped.", fg=typer.colors.YELLOW)
+    except subprocess.CalledProcessError as e:
+        typer.secho(f"Mission bridge failed with exit code {e.returncode}", fg=typer.colors.RED)
+
+
+@app.command()
+def dashboard(
+    port: int = typer.Option(8501, help="Port for the Vite mission-control dev server."),
+    host: str = typer.Option("0.0.0.0", help="Host to bind to."),
+    background: bool = typer.Option(True, "--foreground/--background", help="Run in the background (default) or foreground."),
+):
+    """
+    Launch the React mission-control operator dashboard (Vite dev server).
+
+    For the legacy Streamlit UI and camera websocket helper, use `lunar streamlit-dashboard`.
+    """
+    _launch_vite_mission_control(port=port, host=host, background=background, log_name="dashboard")
+
+
+@app.command("streamlit-dashboard")
+def streamlit_dashboard(
+    port: int = typer.Option(8501, help="Port to run Streamlit on."),
+    host: str = typer.Option("0.0.0.0", help="Host to bind to."),
+    background: bool = typer.Option(True, "--foreground/--background", help="Run in the background (default) or foreground."),
+):
+    """
+    Launch the legacy Streamlit dashboard plus the camera websocket bridge.
+
+    Prefer `lunar dashboard` for the current React mission-control app.
     """
     root = find_repo_root()
     dashboard_path = root / "lunar" / "src" / "lunar" / "dashboard" / "app.py"
     camera_ws_path = root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"
-    log_path = root / ".lunar" / "dashboard.log"
+    log_path = root / ".lunar" / "streamlit_dashboard.log"
     camera_log_path = root / ".lunar" / "camera_ws.log"
     package_root = root / "lunar" / "src"
-    
+
     if not dashboard_path.exists():
-        typer.secho(f"Error: Dashboard app not found at {dashboard_path}", fg=typer.colors.RED)
+        typer.secho(f"Error: Streamlit app not found at {dashboard_path}", fg=typer.colors.RED)
         raise typer.Exit(1)
     if not camera_ws_path.exists():
         typer.secho(f"Error: Camera websocket app not found at {camera_ws_path}", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    # Ensure the ROS workspace and distro env are loaded before launching Streamlit,
-    # otherwise the dashboard bridge import falls back to demo mode on Jetson.
     ensure_env(force=True)
-        
-    typer.secho(f"🚀 Launching Mission Control on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
-    
+
+    typer.secho(f"Launching legacy Streamlit dashboard on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
+
     cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
 
     ros_setup = _detect_ros_setup_script()
@@ -1933,19 +2111,18 @@ def dashboard(
     camera_cmd = " && ".join(cmd_parts[:-1] + [f"{sys.executable} {camera_ws_path}"])
 
     if background:
-        typer.echo("Starting dashboard in background...")
+        typer.echo("Starting Streamlit dashboard in background...")
         camera_proc = spawn("camera_ws", camera_cmd, log_file=camera_log_path)
-        proc = spawn("dashboard", cmd, log_file=log_path)
+        proc = spawn("streamlit_dashboard", cmd, log_file=log_path)
         save_state([camera_proc, proc])
-        typer.echo(f"Dashboard running in background. Logs: {log_path}")
+        typer.echo(f"Streamlit dashboard running in background. Logs: {log_path}")
         typer.echo("Run 'lunar kill' to stop.")
     else:
         camera_proc = spawn("camera_ws", camera_cmd, log_file=camera_log_path)
         try:
-            # We use shell=True to allow 'source' and '&&'
             subprocess.run(cmd, shell=True, executable="/bin/bash", check=True)
         except KeyboardInterrupt:
-            typer.secho("\nDashboard stopped.", fg=typer.colors.YELLOW)
+            typer.secho("\nStreamlit dashboard stopped.", fg=typer.colors.YELLOW)
         except subprocess.CalledProcessError as e:
             typer.secho(f"Streamlit failed with exit code {e.returncode}", fg=typer.colors.RED)
         finally:

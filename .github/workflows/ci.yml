@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-test-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.8"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Sync lunar Python env
+        working-directory: lunar
+        run: uv sync
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: lunar/mission-control/pnpm-lock.yaml
+
+      - name: Install mission-control deps
+        working-directory: lunar/mission-control
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint, TypeScript build, offline tests
+        run: make ci

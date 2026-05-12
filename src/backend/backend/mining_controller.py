@@ -8,8 +8,7 @@ import tf2_geometry_msgs
 
 from rclpy.node import Node, QoSProfile
 from geometry_msgs.msg import Pose, PoseStamped, Vector3, Twist, Quaternion
-from nav_msgs.msg import Odometry
-from std_msgs.msg import Int16, Int8, ColorRGBA, Float32
+from std_msgs.msg import Int16, ColorRGBA
 from visualization_msgs.msg import Marker
 from enum import Enum
 
@@ -160,7 +159,8 @@ class MiningController(Node):
     def onTagPose(self, msg):
 
         transform = self.getTransform(msg.header.stamp)
-        if transform == None: return
+        if transform is None:
+            return
 
         transform_pose = tf2_geometry_msgs.do_transform_pose(msg.pose, transform)
 
