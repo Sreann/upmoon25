@@ -36,6 +36,9 @@ MISSION_CONTROL_DIR := $(ROOT)/lunar/mission-control
 input ?= field_photos/in
 output ?= field_photos/out
 
+# Prefer global/Corepack `pnpm`; otherwise bootstrap pinned pnpm via npx (no global install needed).
+MISSION_PNPM := $(if $(shell command -v pnpm 2>/dev/null),pnpm,npx --yes pnpm@9)
+
 .PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-firmware test-offline ci tune-flags run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
 
 help:
@@ -103,10 +106,10 @@ mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
 
 mission-control:
-	cd "$(MISSION_CONTROL_DIR)" && pnpm dev --host 0.0.0.0 --port 8501
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) dev --host 0.0.0.0 --port 8501
 
 mission-control-build:
-	cd "$(MISSION_CONTROL_DIR)" && pnpm build
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) build
 
 autonomy-stack:
 	docker exec -it upmoon25_ros lunar autonomy-stack --grid-preset $(or $(grid),standard)
@@ -118,7 +121,7 @@ lint:
 		cd "$(ROOT)" && uvx ty check src/backend lunar/src; \
 	fi
 	cd "$(ROOT)" && uvx ruff check src/backend lunar/src
-	cd "$(MISSION_CONTROL_DIR)" && pnpm lint
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) lint
 
 test: lint
 	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
@@ -130,7 +133,7 @@ test-offline:
 	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
 
 ci: lint
-	cd "$(MISSION_CONTROL_DIR)" && pnpm build
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) build
 	cd "$(ROOT)/lunar" && uv run python ../src/backend/test/run_offline_unit_tests.py
 
 tune-flags:
@@ -165,8 +168,8 @@ ros-shell:
 	@bash -lc 'cd lunar && eval "$$(uv run --no-sync lunar shell-env)" && (ros2 daemon stop >/dev/null 2>&1 || true) && (ros2 daemon start >/dev/null 2>&1 || true) && export PS1="(lunar-ros) $$PS1" && exec bash --noprofile --norc -i'
 
 mission-control-install:
-	@command -v pnpm >/dev/null 2>&1 || { echo "pnpm not found (install Node 20+ and: corepack enable pnpm)" >&2; exit 1; }
-	cd "$(MISSION_CONTROL_DIR)" && pnpm install --frozen-lockfile
+	@command -v node >/dev/null 2>&1 || { echo "node required for mission-control (install Node 20+)" >&2; exit 1; }
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) install --frozen-lockfile
 
 mission-control-offline-prep: mission-control-install mission-control-build
 	@echo "mission-control: dist/ is rsynced to the robot; node_modules stays on this machine (OS/arch specific)."
