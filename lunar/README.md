@@ -50,6 +50,7 @@ Then open `http://<robot-ip>:8501`. **`lunar dashboard`** starts the UI plus **`
 ## Quality (from **repo root**)
 
 ```bash
+make test-firmware   # native encoder quadrature unit tests only (g++; no ROS / uv)
 make test    # lint + offline Python tests + mission-control eslint
 make ci      # same + production Vite build
 make tune-flags input=field_photos/in output=field_photos/out

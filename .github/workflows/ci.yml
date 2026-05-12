@@ -6,10 +6,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  lint-test-build:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Firmware encoder quadrature tests (native g++)
+        run: make test-firmware
 
       - uses: actions/setup-python@v5
         with:

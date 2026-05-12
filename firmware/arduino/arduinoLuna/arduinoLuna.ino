@@ -36,6 +36,8 @@
 #define IR_SENSOR_LEFT A1
 #define DEBUG_SERIAL 0
 
+#include "encoder_quadrature.h"
+
 char input[INPUT_SIZE];
 Servo cam_servo;
 Servo lin_cam_servo;
@@ -75,15 +77,10 @@ float irRawToDistanceCm(int raw_value) {
 
 void updateEncoder(uint8_t pin_a, uint8_t pin_b, int8_t *last_encoded, long *count) {
   int8_t encoded = readEncoderState(pin_a, pin_b);
-  int8_t sum = (int8_t)((*last_encoded << 2) | encoded);
-
-  // Valid quadrature transitions only. Any other transition is treated as noise.
-  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
-    (*count)--;
-  } else if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
-    (*count)++;
+  int8_t delta = encoder_quadrature_step(last_encoded, encoded);
+  if (delta != 0) {
+    *count += delta;
   }
-  *last_encoded = encoded;
 }
 
 // Converts 0->100 percent range to servo
@@ -181,13 +178,13 @@ void setup() {
   pinMode(DUMP_MOTOR, OUTPUT);
   digitalWrite(DUMP_MOTOR, HIGH);
 
-  // Encoder pins reserved for later bring-up
+  // Wheel encoders: quadrature on digital pins with internal pull-ups
   pinMode(ENCODE_R_A, INPUT_PULLUP);
   pinMode(ENCODE_R_B, INPUT_PULLUP);
   pinMode(ENCODE_L_A, INPUT_PULLUP);
   pinMode(ENCODE_L_B, INPUT_PULLUP);
-  last_encoded_right = readEncoderState(ENCODE_R_A, ENCODE_R_B);
-  last_encoded_left = readEncoderState(ENCODE_L_A, ENCODE_L_B);
+  last_encoded_right = readEncoderState(ENCODE_R_A, ENCODE_R_B) & 3;
+  last_encoded_left = readEncoderState(ENCODE_L_A, ENCODE_L_B) & 3;
 
   lin_cam_servo.attach(CAM_PIN);
   lin_bucket_servo.attach(BUCKET_PIN);
