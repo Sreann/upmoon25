@@ -298,6 +298,7 @@ def _force_cleanup_runtime_processes() -> list[str]:
         "[l]unar_camera_ws_bridge",
         "[l]unar_dashboard_bridge",
         "[l]unar_mission_control_bridge",
+        "[m]ission-control/dist &&",
         "[p]npm dev --host .* --port",
         "[m]ission_bridge",
         "[p]erception_health",
@@ -1959,23 +1960,43 @@ def autonomy_stack(
 
 
 def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_name: str) -> None:
-    """Run the React/Vite mission-control dev server (shared by `dashboard` and `mission-control`)."""
+    """Run mission-control: Vite dev server when pnpm exists, else static ``dist/`` via stdlib http.server."""
     root = find_repo_root()
     app_dir = root / "lunar" / "mission-control"
+    dist_dir = app_dir / "dist"
+    dist_index = dist_dir / "index.html"
     log_path = root / ".lunar" / f"{log_name}.log"
 
     if not app_dir.exists():
         typer.secho(f"Error: mission-control app not found at {app_dir}", fg=typer.colors.RED)
         raise typer.Exit(1)
-    if shutil.which("pnpm") is None:
-        typer.secho("Error: pnpm is required to run the mission-control app.", fg=typer.colors.RED)
+
+    if shutil.which("pnpm") is not None:
+        cmd = f"cd {shlex.quote(str(app_dir))} && pnpm dev --host {shlex.quote(host)} --port {int(port)}"
+        mode = "dev (pnpm + Vite)"
+    elif dist_index.is_file():
+        py = shlex.quote(sys.executable)
+        dist_q = shlex.quote(str(dist_dir))
+        host_q = shlex.quote(host)
+        if sys.version_info >= (3, 8):
+            cmd = f"cd {dist_q} && {py} -m http.server {int(port)} --bind {host_q}"
+        else:
+            cmd = f"cd {dist_q} && {py} -m http.server {int(port)}"
+        mode = "static (dist/ + http.server)"
+        typer.secho("pnpm not found; serving pre-built mission-control from dist/.", fg=typer.colors.YELLOW)
+    else:
+        typer.secho(
+            "Error: pnpm is not installed and mission-control is not built.\n"
+            f"  Install pnpm for dev mode, or run `pnpm build` in\n  {app_dir}\n"
+            "  on a machine with Node (e.g. `make mission-control-build`), then copy dist/ here.",
+            fg=typer.colors.RED,
+        )
         raise typer.Exit(1)
 
-    cmd = f"cd {shlex.quote(str(app_dir))} && pnpm dev --host {shlex.quote(host)} --port {int(port)}"
-    typer.secho(f"Launching mission control on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
+    typer.secho(f"Launching mission control — {mode} — http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
 
     if background:
-        proc = spawn("mission_control", cmd, log_file=log_path)
+        proc = spawn(log_name, cmd, log_file=log_path)
         save_state([proc])
         typer.echo(f"Mission control running in background. Logs: {log_path}")
         typer.echo("Run 'lunar kill' to stop tracked background processes.")
@@ -1991,14 +2012,15 @@ def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_
 
 @app.command()
 def mission_control(
-    port: int = typer.Option(8501, help="Port for the Vite mission-control dev server."),
+    port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(False, "--background/--foreground", help="Run in the background or foreground."),
 ):
     """
-    Launch the React mission-control dashboard (Vite dev server).
+    Launch the React mission-control dashboard.
 
-    Same app as `lunar dashboard`; use this command if you prefer the explicit name.
+    Uses Vite dev server when pnpm is available; otherwise serves ``dist/`` with Python's http.server
+    (build ``dist`` elsewhere, e.g. ``make mission-control-build``).
     """
     _launch_vite_mission_control(port=port, host=host, background=background, log_name="mission_control")
 
@@ -2053,14 +2075,15 @@ def mission_bridge(
 
 @app.command()
 def dashboard(
-    port: int = typer.Option(8501, help="Port for the Vite mission-control dev server."),
+    port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(True, "--foreground/--background", help="Run in the background (default) or foreground."),
 ):
     """
-    Launch the React mission-control operator dashboard (Vite dev server).
+    Launch the React mission-control operator dashboard.
 
-    For the legacy Streamlit UI and camera websocket helper, use `lunar streamlit-dashboard`.
+    Uses Vite when pnpm is installed; otherwise serves ``lunar/mission-control/dist/`` with Python (no pnpm on device).
+    For the legacy Streamlit UI and camera websocket helper, use ``lunar streamlit-dashboard``.
     """
     _launch_vite_mission_control(port=port, host=host, background=background, log_name="dashboard")
 

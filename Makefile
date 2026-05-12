@@ -31,10 +31,11 @@ DEPLOY_PATHS = \
 	src
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+MISSION_CONTROL_DIR := $(ROOT)/lunar/mission-control
 input ?= field_photos/in
 output ?= field_photos/out
 
-.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-build autonomy-stack lint test test-offline ci tune-flags run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
+.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-offline ci tune-flags run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
 
 help:
 	@echo "upmoon25-auto Docker Management"
@@ -50,7 +51,9 @@ help:
 	@echo "  make tune-flags input=... output=... - Batch flag detection on images (no ROS; defaults field_photos/in out)"
 	@echo "  make mission-bridge - Launch the safe-command mission-control ROS bridge"
 	@echo "  make mission-control - Launch the new web mission-control app"
-	@echo "  make mission-control-build - Build the new web mission-control app"
+	@echo "  make mission-control-install - pnpm install (mission-control, frozen lockfile)"
+	@echo "  make mission-control-build - Production build (mission-control)"
+	@echo "  make mission-control-offline-prep - install + build for airgapped Jetson deploy"
 	@echo "  make autonomy-stack grid=[coarse|standard|fine] - Launch shadow-mode perception/autonomy nodes"
 	@echo "  make lint       - ty check + ruff + mission-control eslint"
 	@echo "  make test       - lint + all offline Python unit tests"
@@ -66,8 +69,9 @@ help:
 	@echo "  make shell-env - Print export commands for ROS shell setup"
 	@echo "  make ros-shell - Open an interactive shell with ROS env loaded"
 	@echo "  make install  - Install the lunar CLI (inside container)"
-	@echo "  make deploy   - Rsync source tree to the Jetson workspace"
-	@echo "  make deploy-dry-run - Preview Jetson rsync changes"
+	@echo "  make deploy   - Prep mission-control (pnpm install + build), then rsync to Jetson"
+	@echo "  make deploy OFFLINE_PREP=0 - Rsync only (skip pnpm install/build on this machine)"
+	@echo "  make deploy-dry-run - Same prep, then preview rsync"
 
 build:
 	docker compose build
@@ -97,10 +101,10 @@ mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
 
 mission-control:
-	cd lunar/mission-control && pnpm dev --host 0.0.0.0 --port 8501
+	cd "$(MISSION_CONTROL_DIR)" && pnpm dev --host 0.0.0.0 --port 8501
 
 mission-control-build:
-	cd lunar/mission-control && pnpm build
+	cd "$(MISSION_CONTROL_DIR)" && pnpm build
 
 autonomy-stack:
 	docker exec -it upmoon25_ros lunar autonomy-stack --grid-preset $(or $(grid),standard)
@@ -112,7 +116,7 @@ lint:
 		cd "$(ROOT)" && uvx ty check src/backend lunar/src; \
 	fi
 	cd "$(ROOT)" && uvx ruff check src/backend lunar/src
-	cd "$(ROOT)/lunar/mission-control" && pnpm lint
+	cd "$(MISSION_CONTROL_DIR)" && pnpm lint
 
 test: lint
 	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
@@ -121,7 +125,7 @@ test-offline:
 	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
 
 ci: lint
-	cd "$(ROOT)/lunar/mission-control" && pnpm build
+	cd "$(MISSION_CONTROL_DIR)" && pnpm build
 	cd "$(ROOT)/lunar" && uv run python ../src/backend/test/run_offline_unit_tests.py
 
 tune-flags:
@@ -155,8 +159,21 @@ shell-env:
 ros-shell:
 	@bash -lc 'cd lunar && eval "$$(uv run --no-sync lunar shell-env)" && (ros2 daemon stop >/dev/null 2>&1 || true) && (ros2 daemon start >/dev/null 2>&1 || true) && export PS1="(lunar-ros) $$PS1" && exec bash --noprofile --norc -i'
 
-deploy-dry-run:
-	rsync -azvn --itemize-changes -e "ssh $(RSYNC_SSH_OPTS)" $(RSYNC_EXCLUDES) $(DEPLOY_PATHS) $(JETSON_HOST):$(JETSON_DIR)/
+mission-control-install:
+	@command -v pnpm >/dev/null 2>&1 || { echo "pnpm not found (install Node 20+ and: corepack enable pnpm)" >&2; exit 1; }
+	cd "$(MISSION_CONTROL_DIR)" && pnpm install --frozen-lockfile
+
+mission-control-offline-prep: mission-control-install mission-control-build
+	@echo "mission-control offline bundle ready ($(MISSION_CONTROL_DIR)/node_modules + dist/)"
 
 deploy:
+ifneq ($(OFFLINE_PREP),0)
+	$(MAKE) mission-control-offline-prep
+endif
 	rsync -azv --itemize-changes -e "ssh $(RSYNC_SSH_OPTS)" $(RSYNC_EXCLUDES) $(DEPLOY_PATHS) $(JETSON_HOST):$(JETSON_DIR)/
+
+deploy-dry-run:
+ifneq ($(OFFLINE_PREP),0)
+	$(MAKE) mission-control-offline-prep
+endif
+	rsync -azvn --itemize-changes -e "ssh $(RSYNC_SSH_OPTS)" $(RSYNC_EXCLUDES) $(DEPLOY_PATHS) $(JETSON_HOST):$(JETSON_DIR)/
