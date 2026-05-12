@@ -9,8 +9,8 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
 from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import Pose, PoseStamped, Quaternion, TransformStamped, Twist
-from std_msgs.msg import Header, String, Int8
+from geometry_msgs.msg import Pose, Quaternion, Twist
+from std_msgs.msg import String, Int8
 
 from tf2_ros import TransformException
 from tf2_ros.transform_listener import TransformListener
@@ -140,7 +140,7 @@ class MotionController(Node):
     # Gets the robots position in the map frame
     def getRobotMapPose(self, odom):
         # Get the transform from odom to map
-        while (self.transform == None):
+        while (self.transform is None):
             self.transform = self.lookupTransform('map', 'odom')
 
         transformed_pose = tf2_geometry_msgs.do_transform_pose(odom.pose.pose, self.transform) 
@@ -286,9 +286,9 @@ class MotionController(Node):
         self.goal_idx = -1
         # Poses are in the map frame, so we need to transform them to the odom frame
         transform = None
-        while (transform == None):
+        while (transform is None):
             transform = self.lookupTransform('map', 'odom')
-            if (transform == None):
+            if (transform is None):
                 self.get_logger().info('Waiting for transform')
                 rclpy.sleep(0.1)
 

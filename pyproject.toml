@@ -1,0 +1,34 @@
+[project]
+name = "upmoon25-workspace"
+version = "0"
+requires-python = ">=3.8"
+
+[tool.ruff]
+exclude = [
+    ".research",
+    ".git",
+    "build",
+    "install",
+    "log",
+]
+line-length = 120
+
+[tool.ruff.lint.per-file-ignores]
+"src/backend/test/*.py" = ["E402"]
+"src/frontend/test/*.py" = ["E402"]
+"lunar/src/lunar/dashboard/app.py" = ["E402", "E701"]
+"src/backend/backend/joystick_driver.py" = ["F403", "F405"]
+"src/backend/backend/keyboard_driver_comp.py" = ["F403", "F405"]
+"src/backend/backend/rc_controller.py" = ["F403", "F405"]
+
+# ROS/rclpy stubs are not in the dev venv; unresolved imports are ignored. Other issues downgrade
+# to warnings so `ty check` can run in CI without a sourced ROS workspace while still surfacing noise.
+[tool.ty.rules]
+unresolved-import = "ignore"
+unresolved-attribute = "warn"
+unresolved-reference = "warn"
+invalid-method-override = "warn"
+invalid-argument-type = "warn"
+invalid-assignment = "warn"
+unsupported-operator = "warn"
+no-matching-overload = "warn"

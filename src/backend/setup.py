@@ -1,6 +1,6 @@
 import os
 from glob import glob
-from setuptools import setup, find_packages
+from setuptools import setup
 
 package_name = 'backend'
 
@@ -42,6 +42,10 @@ setup(
             'rgb_transport = backend.rgb_transport:main',
             'joystick_driver = backend.joystick_driver:main',
             'keyboard_driver_comp = backend.keyboard_driver_comp:main',
+            'perception_health = backend.perception_health:main',
+            'local_terrain_grid = backend.local_terrain_grid:main',
+            'flag_detector = backend.flag_detector:main',
+            'autonomy_supervisor = backend.autonomy_supervisor:main',
         ],
     },
 )

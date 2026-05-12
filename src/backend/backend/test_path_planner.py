@@ -1,10 +1,6 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile
-from interfaces.srv import FindPath
 from interfaces.srv import GoTo
-from geometry_msgs.msg import Pose, Quaternion
-from nav_msgs.msg import Path
 
 class TestPathPlanner(Node):
     def __init__(self):
@@ -39,7 +35,7 @@ def main():
     node.get_logger().info('Node initialized')
 
     while True:
-        response = node.sendRequest()
+        node.sendRequest()
 
         node.get_logger().info("Found response!")
     #node.future = node.cli.call_async(node.req)

@@ -3,6 +3,8 @@ pyproject.toml
 src/lunar/__init__.py
 src/lunar/cli.py
 src/lunar/config.py
+src/lunar/keyboard_tui.py
+src/lunar/mission_bridge.py
 src/lunar/process.py
 src/lunar.egg-info/PKG-INFO
 src/lunar.egg-info/SOURCES.txt
@@ -13,6 +15,7 @@ src/lunar.egg-info/top_level.txt
 src/lunar/dashboard/__init__.py
 src/lunar/dashboard/app.py
 src/lunar/dashboard/bridge.py
+src/lunar/dashboard/camera_ws.py
 src/lunar/dashboard/state.py
 src/lunar/dashboard/components/__init__.py
 src/lunar/dashboard/components/hardware.py

@@ -2,7 +2,7 @@ import threading
 import time
 import dataclasses
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Deque
+from typing import Dict, List, Optional, Deque
 from collections import deque
 import numpy as np
 

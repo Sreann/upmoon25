@@ -19,7 +19,6 @@ from rclpy.node import Node
 
 from pygame.locals import *
 
-from geometry_msgs.msg import Twist
 from std_msgs.msg import Int16, Int8
 
 
@@ -63,7 +62,6 @@ class MinimalDriver(Node):
     # Helper method for pollEvents
     def setKeys(self, key, val):
         
-        cam_pan = 0
 
         if (val == 0):
             pass

@@ -18,6 +18,18 @@ This repository contains both the ROS2 code and a guide for connecting to and op
 			- After the Client and Server are present, we want to start and set the Service! Run `Start-Service sshd`, then `Set-Service -Name sshd -StartupType 'Automatic'`.
 			- We can check if the Service is running by typing `Get-Service sshd`!
      		- Finally, type `ssh upmoon25@192.168.0.2` into powershell. The password is `upmoon25`.
+
+### Deploying with no internet on the Jetson
+
+Run **`make deploy`** from a machine that **does** have internet (your laptop). It will:
+
+1. Run **`pnpm install --frozen-lockfile`** and **`pnpm build`** under `lunar/mission-control/` on **this** machine (your OS/arch, e.g. macOS, to produce **`dist/`**).
+2. **Rsync** the usual tree, but **`lunar/mission-control/node_modules/` is excluded** so macOS/Linux x64 native tools (e.g. Rolldown/Vite) are **not** copied to the Jetson. The robot uses **`dist/`** only (see `lunar dashboard` static mode); **`pnpm`** is not required there.
+
+The Jetson does not need npm or network for that install step. After sync, **`lunar dashboard`** serves **`dist/`** with Python when **`pnpm`** is not installed. Use **`make deploy OFFLINE_PREP=0`** to skip the pnpm step when you only changed non-frontend files and already have a good **`dist/`** on disk.
+
+Python: `lunar/.venv` is still **excluded** from rsync (see `RSYNC_EXCLUDES`); build or sync the Jetson Python env separately if the robot cannot run `uv sync` online.
+
 ### Running the code in this repository
 
 This project is designed to be run on three machines simulataneously; the Jetson, a laptop for RC control, and a laptop for autonomous control. Ensure ROS2 Humble is installed on the machine you're running the code on. Of course, the Jetson already has ROS2 Humble setup. There's an installation tutorial [here](https://docs.ros.org/en/humble/Installation.html). **Make sure your domain ID is set to 8888!** 
@@ -65,3 +77,9 @@ If you want to launch with a world, include the parameter `world:="path to world
 `ros2 launch backend launch.py world:=~/robotics/upmoon25/gz_worlds/arena1.world`
 
 If you want to launch headless (no GUI), include the parameter `gui:=false`
+
+## Developer tools
+
+- **Offline tests + lint:** from repo root, `make test` or `make ci` (includes mission-control production build).
+- **Shadow autonomy stack:** `lunar autonomy-stack` (perception health, local terrain grid, flag detector, autonomy supervisor). See `lunar/.plans/` for roadmap.
+- **Arena flag photos (no ROS):** `make tune-flags` with images in `field_photos/in` → overlays in `field_photos/out` (folders gitignored by default).

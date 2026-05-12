@@ -8,11 +8,10 @@ from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import PointCloud2
 from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Pose, Vector3, Point, Quaternion
-from nav_msgs.msg import OccupancyGrid, MapMetaData, Odometry
+from geometry_msgs.msg import Pose, Point, Quaternion
+from nav_msgs.msg import OccupancyGrid, MapMetaData
 from map_msgs.msg import OccupancyGridUpdate
 from std_msgs.msg import Header, Int8, Float32, ColorRGBA
-from visualization_msgs.msg import Marker
 from scipy.interpolate import griddata
 
 OBS_MAX_Z = -0.1
@@ -240,7 +239,7 @@ class GlobalMapper(Node):
     def transformPoints(self, points, stamp):
         tf = self.getTransform('map', stamp)
         
-        if (tf == None):
+        if (tf is None):
             return (points, False)
         
         valid_mask = None
@@ -274,7 +273,7 @@ class GlobalMapper(Node):
 
         points, success = self.transformPoints(points, stamp)
 
-        if (success == False):
+        if (not success):
             return
 
         x_max, x_min, y_max, y_min = self.filterSnapPoints(points)
