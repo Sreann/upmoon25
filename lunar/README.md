@@ -13,14 +13,29 @@ uv pip install -e .
 uv run lunar sim --world ../gz_worlds/arena1.world --port 8765
 ```
 
+### Physical robot + React dashboard
+
+From the **repo root** (after `uv pip install -e .` from `lunar/`):
+
+```bash
+uv run lunar build
+uv run lunar run robot
+uv run lunar dashboard
+```
+
+Then open `http://<robot-ip>:8501`. **`lunar dashboard`** starts the UI plus **`camera_ws`** (port **8767**, JPEG + `/sensor/ws`) and **`mission_bridge`** (port **8770**, `/mission/ws`), matching what you used to get from Streamlit without extra commands. Stop everything it spawned with **`lunar kill`**.
+
+- UI only, no ROS sidecars: `uv run lunar dashboard --no-robot-stack`
+- If **8767** or **8770** is already in use, run `lunar kill` or stop the other process before starting the dashboard again.
+
 ## Operator UIs
 
 | Command | What it runs |
 |---------|----------------|
-| **`lunar dashboard`** | React **mission-control**: **Vite** if `pnpm` is available, else **static `dist/`** via Python `http.server` (build on a dev machine first). Default **port 8501**, background by default. |
-| **`lunar mission-control`** | Same app; explicit name. |
+| **`lunar dashboard`** | React **mission-control** (Vite if `pnpm` exists, else static **`dist/`**). By default also starts **`camera_ws`** (:8767) and **`mission_bridge`** (:8770). Default HTTP **8501**, background by default. |
+| **`lunar mission-control`** | Same launcher as **`lunar dashboard`** (including the same default ROS sidecars). |
 | **`lunar streamlit-dashboard`** | Legacy **Streamlit** Command Center + camera WebSocket helper (default port 8501 for Streamlit). |
-| **`lunar mission-bridge`** | Safe WebSocket bridge for mission-control telemetry/commands. |
+| **`lunar mission-bridge`** | Run **only** the bridge (for split setups; usually unnecessary when using **`lunar dashboard`**). |
 
 ## ROS / robot helpers
 

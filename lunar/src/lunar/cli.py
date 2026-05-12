@@ -1287,6 +1287,19 @@ def build(
     typer.echo(f"ROS_DISTRO={os.environ.get('ROS_DISTRO', 'unknown')}")
     typer.echo(f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', 'unset')}")
 
+    app_dir = root / "lunar" / "mission-control"
+    if shutil.which("pnpm") is not None and (app_dir / "package.json").exists():
+        if not (app_dir / "node_modules").exists():
+            typer.echo("Installing mission-control dependencies (pnpm install)...")
+            subprocess.run(["pnpm", "install"], cwd=str(app_dir))
+        typer.echo("Building mission-control (pnpm build) for `lunar dashboard` static mode...")
+        res_mc = subprocess.run(["pnpm", "build"], cwd=str(app_dir))
+        if res_mc.returncode != 0:
+            typer.secho(
+                "mission-control pnpm build failed (dashboard may need `pnpm build` on a dev machine).",
+                fg=typer.colors.YELLOW,
+            )
+
     try:
         _flash_servo_firmware(root)
     except (subprocess.CalledProcessError, RuntimeError) as e:
@@ -1959,7 +1972,43 @@ def autonomy_stack(
         typer.echo("Foreground log streaming is not implemented for this command yet; use 'lunar logs'.")
 
 
-def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_name: str) -> None:
+def _ros_source_env_chain(root: Path) -> str:
+    """Shell prefix: lunar on PYTHONPATH, source ROS + colcon workspace, ROS_DOMAIN_ID."""
+    package_root = root / "lunar" / "src"
+    parts = [f"export PYTHONPATH={shlex.quote(str(package_root))}:$PYTHONPATH"]
+    ros_setup = _detect_ros_setup_script()
+    workspace_setup = root / "install" / "setup.bash"
+    if ros_setup and ros_setup.exists():
+        parts.append(f"source {ros_setup}")
+    if workspace_setup.exists():
+        parts.append(f"source {workspace_setup}")
+    parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
+    return " && ".join(parts)
+
+
+def _camera_ws_command(root: Path) -> str:
+    """Bash command to run camera_ws.py (JPEG streams + /sensor/ws)."""
+    return f"{_ros_source_env_chain(root)} && {sys.executable} {shlex.quote(str(root / 'lunar' / 'src' / 'lunar' / 'dashboard' / 'camera_ws.py'))}"
+
+
+def _mission_bridge_run_command(root: Path, port: int, host: str) -> str:
+    """Bash command to run mission_bridge.main (MissionControlSnapshot on /mission/ws)."""
+    return (
+        f"{_ros_source_env_chain(root)} && "
+        f"{sys.executable} -c \"from lunar.mission_bridge import main; main(port={int(port)}, host={host!r})\""
+    )
+
+
+def _launch_vite_mission_control(
+    *,
+    port: int,
+    host: str,
+    background: bool,
+    log_name: str,
+    with_robot_stack: bool = False,
+    stack_bridge_port: int = 8770,
+    stack_bridge_host: str = "0.0.0.0",
+) -> None:
     """Run mission-control: Vite dev server when pnpm exists, else static ``dist/`` via stdlib http.server."""
     root = find_repo_root()
     app_dir = root / "lunar" / "mission-control"
@@ -1995,10 +2044,38 @@ def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_
 
     typer.secho(f"Launching mission control — {mode} — http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
 
+    camera_proc = None
+    bridge_proc = None
+    camera_log = root / ".lunar" / "camera_ws.log"
+    bridge_log = root / ".lunar" / "mission_bridge.log"
+
+    if with_robot_stack:
+        cam_path = root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"
+        if not cam_path.is_file():
+            typer.secho(f"Error: camera_ws not found at {cam_path}", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        ensure_env(force=True)
+        typer.secho(
+            "Bundling camera_ws (:8767) + mission_bridge (:8770) for live cameras, sensors, and mission snapshot.",
+            fg=typer.colors.CYAN,
+        )
+        camera_proc = spawn("camera_ws", _camera_ws_command(root), log_file=camera_log)
+        bridge_proc = spawn(
+            "mission_bridge",
+            _mission_bridge_run_command(root, stack_bridge_port, stack_bridge_host),
+            log_file=bridge_log,
+        )
+
     if background:
         proc = spawn(log_name, cmd, log_file=log_path)
-        save_state([proc])
+        procs_to_save = []
+        if with_robot_stack:
+            procs_to_save.extend([camera_proc, bridge_proc])
+        procs_to_save.append(proc)
+        save_state(procs_to_save)
         typer.echo(f"Mission control running in background. Logs: {log_path}")
+        if with_robot_stack:
+            typer.echo(f"Also logging camera_ws to {camera_log} and mission_bridge to {bridge_log}")
         typer.echo("Run 'lunar kill' to stop tracked background processes.")
         return
 
@@ -2008,6 +2085,13 @@ def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_
         typer.secho("\nMission control stopped.", fg=typer.colors.YELLOW)
     except subprocess.CalledProcessError as e:
         typer.secho(f"Mission control failed with exit code {e.returncode}", fg=typer.colors.RED)
+    finally:
+        if with_robot_stack and camera_proc is not None and bridge_proc is not None:
+            for p in (camera_proc, bridge_proc):
+                try:
+                    os.killpg(p.pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
 
 @app.command()
@@ -2015,6 +2099,11 @@ def mission_control(
     port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(False, "--background/--foreground", help="Run in the background or foreground."),
+    with_robot_stack: bool = typer.Option(
+        True,
+        "--with-robot-stack/--no-robot-stack",
+        help="Also start camera_ws (:8767) and mission_bridge (:8770) for live feeds (same as lunar dashboard).",
+    ),
 ):
     """
     Launch the React mission-control dashboard.
@@ -2022,7 +2111,13 @@ def mission_control(
     Uses Vite dev server when pnpm is available; otherwise serves ``dist/`` with Python's http.server
     (build ``dist`` elsewhere, e.g. ``make mission-control-build``).
     """
-    _launch_vite_mission_control(port=port, host=host, background=background, log_name="mission_control")
+    _launch_vite_mission_control(
+        port=port,
+        host=host,
+        background=background,
+        log_name="mission_control",
+        with_robot_stack=with_robot_stack,
+    )
 
 
 @app.command()
@@ -2040,22 +2135,10 @@ def mission_bridge(
     """
     root = find_repo_root()
     log_path = root / ".lunar" / "mission_bridge.log"
-    package_root = root / "lunar" / "src"
 
     ensure_env(force=True)
 
-    cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
-    ros_setup = _detect_ros_setup_script()
-    workspace_setup = root / "install" / "setup.bash"
-    if ros_setup and ros_setup.exists():
-        cmd_parts.append(f"source {ros_setup}")
-    if workspace_setup.exists():
-        cmd_parts.append(f"source {workspace_setup}")
-    cmd_parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
-    cmd_parts.append(
-        f"{sys.executable} -c \"from lunar.mission_bridge import main; main(port={int(port)}, host={host!r})\""
-    )
-    cmd = " && ".join(cmd_parts)
+    cmd = _mission_bridge_run_command(root, port, host)
 
     typer.secho(f"Launching mission bridge on ws://{host}:{port}/mission/ws", fg=typer.colors.GREEN, bold=True)
     if background:
@@ -2078,14 +2161,28 @@ def dashboard(
     port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(True, "--foreground/--background", help="Run in the background (default) or foreground."),
+    with_robot_stack: bool = typer.Option(
+        True,
+        "--with-robot-stack/--no-robot-stack",
+        help="Also start camera_ws (:8767) and mission_bridge (:8770) so cameras and mission data work without extra commands.",
+    ),
 ):
     """
     Launch the React mission-control operator dashboard.
 
+    By default also starts **camera_ws** (JPEG + /sensor/ws) and **mission_bridge** (/mission/ws), like the legacy
+    Streamlit flow, so ``lunar build`` → ``lunar run robot`` → ``lunar dashboard`` is enough on the robot.
+
     Uses Vite when pnpm is installed; otherwise serves ``lunar/mission-control/dist/`` with Python (no pnpm on device).
-    For the legacy Streamlit UI and camera websocket helper, use ``lunar streamlit-dashboard``.
+    For the legacy Streamlit UI, use ``lunar streamlit-dashboard``.
     """
-    _launch_vite_mission_control(port=port, host=host, background=background, log_name="dashboard")
+    _launch_vite_mission_control(
+        port=port,
+        host=host,
+        background=background,
+        log_name="dashboard",
+        with_robot_stack=with_robot_stack,
+    )
 
 
 @app.command("streamlit-dashboard")
@@ -2104,7 +2201,6 @@ def streamlit_dashboard(
     camera_ws_path = root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"
     log_path = root / ".lunar" / "streamlit_dashboard.log"
     camera_log_path = root / ".lunar" / "camera_ws.log"
-    package_root = root / "lunar" / "src"
 
     if not dashboard_path.exists():
         typer.secho(f"Error: Streamlit app not found at {dashboard_path}", fg=typer.colors.RED)
@@ -2117,21 +2213,12 @@ def streamlit_dashboard(
 
     typer.secho(f"Launching legacy Streamlit dashboard on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
 
-    cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
-
-    ros_setup = _detect_ros_setup_script()
-    workspace_setup = root / "install" / "setup.bash"
-    if ros_setup and ros_setup.exists():
-        cmd_parts.append(f"source {ros_setup}")
-    if workspace_setup.exists():
-        cmd_parts.append(f"source {workspace_setup}")
-    cmd_parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
-
-    cmd_parts.append(
-        f"{sys.executable} -m streamlit run {dashboard_path} --server.port {port} --server.address {host} --logger.level info"
+    chain = _ros_source_env_chain(root)
+    cmd = (
+        f"{chain} && {sys.executable} -m streamlit run {shlex.quote(str(dashboard_path))} "
+        f"--server.port {int(port)} --server.address {shlex.quote(host)} --logger.level info"
     )
-    cmd = " && ".join(cmd_parts)
-    camera_cmd = " && ".join(cmd_parts[:-1] + [f"{sys.executable} {camera_ws_path}"])
+    camera_cmd = _camera_ws_command(root)
 
     if background:
         typer.echo("Starting Streamlit dashboard in background...")

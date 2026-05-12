@@ -6,10 +6,24 @@ import type { CommandResult, MissionControlSnapshot, RobotCommand } from './type
 
 type BridgeMode = 'mock' | 'live'
 
-const liveUrl = import.meta.env.VITE_MISSION_WS_URL as string | undefined
+/** Match `lunar mission-bridge` default: same host as the page, port 8770. */
+function resolveMissionWsUrl(): string | undefined {
+  if (
+    import.meta.env.VITE_MISSION_WS_DISABLE === '1' ||
+    import.meta.env.VITE_MISSION_WS_DISABLE === 'true'
+  ) {
+    return undefined
+  }
+  const env = (import.meta.env.VITE_MISSION_WS_URL as string | undefined)?.trim()
+  if (env) return env
+  if (typeof window === 'undefined') return undefined
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.hostname}:8770/mission/ws`
+}
 
 export function useMissionBridge(scenario: DemoScenario) {
-  const [mode, setMode] = useState<BridgeMode>(liveUrl ? 'live' : 'mock')
+  const [liveUrl] = useState(() => resolveMissionWsUrl())
+  const [mode, setMode] = useState<BridgeMode>(() => (liveUrl ? 'live' : 'mock'))
   const [liveSnapshot, setLiveSnapshot] = useState<MissionControlSnapshot>(() => createMockSnapshot(scenario))
   const [liveStatus, setLiveStatus] = useState<LiveBridgeStatus>({
     connected: false,
@@ -29,7 +43,7 @@ export function useMissionBridge(scenario: DemoScenario) {
       onSnapshot: setLiveSnapshot,
       onStatus: setLiveStatus,
     })
-  }, [])
+  }, [liveUrl])
 
   useEffect(() => {
     if (mode !== 'live' || !liveBridge) return
