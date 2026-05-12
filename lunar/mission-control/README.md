@@ -13,6 +13,8 @@ pnpm build
 pnpm lint
 ```
 
+**Robot (Linux, no pnpm):** build on a dev machine (`pnpm build`), sync the repo with `make deploy` (it **does not** rsync `node_modules/`). On the robot, `lunar dashboard` serves `dist/` with Python when `pnpm` is missing.
+
 From the repo root:
 
 ```bash

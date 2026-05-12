@@ -13,7 +13,8 @@ RSYNC_EXCLUDES = \
 	--exclude '/install/' \
 	--exclude '/log/' \
 	--exclude '.ruff_cache/' \
-	--exclude 'lunar/.venv/'
+	--exclude 'lunar/.venv/' \
+	--exclude 'lunar/mission-control/node_modules/'
 DEPLOY_PATHS = \
 	BUILD.bash \
 	Dockerfile \
@@ -164,7 +165,7 @@ mission-control-install:
 	cd "$(MISSION_CONTROL_DIR)" && pnpm install --frozen-lockfile
 
 mission-control-offline-prep: mission-control-install mission-control-build
-	@echo "mission-control offline bundle ready ($(MISSION_CONTROL_DIR)/node_modules + dist/)"
+	@echo "mission-control: dist/ is rsynced to the robot; node_modules stays on this machine (OS/arch specific)."
 
 deploy:
 ifneq ($(OFFLINE_PREP),0)

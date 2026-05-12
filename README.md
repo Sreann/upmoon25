@@ -23,10 +23,10 @@ This repository contains both the ROS2 code and a guide for connecting to and op
 
 Run **`make deploy`** from a machine that **does** have internet (your laptop). It will:
 
-1. Run **`pnpm install --frozen-lockfile`** and **`pnpm build`** under `lunar/mission-control/` so `node_modules/` and `dist/` exist locally.
-2. **Rsync** the usual tree (including `lunar/`, so mission-control dependencies and the built site go to the Jetson).
+1. Run **`pnpm install --frozen-lockfile`** and **`pnpm build`** under `lunar/mission-control/` on **this** machine (your OS/arch, e.g. macOS, to produce **`dist/`**).
+2. **Rsync** the usual tree, but **`lunar/mission-control/node_modules/` is excluded** so macOS/Linux x64 native tools (e.g. Rolldown/Vite) are **not** copied to the Jetson. The robot uses **`dist/`** only (see `lunar dashboard` static mode); **`pnpm`** is not required there.
 
-The Jetson does not need npm or network for that install step. After sync, **`lunar dashboard`** serves **`dist/`** with Python when **`pnpm`** is not installed. Use **`make deploy OFFLINE_PREP=0`** to skip the pnpm step when you only changed non-frontend files and already have a good `node_modules` + `dist` on disk.
+The Jetson does not need npm or network for that install step. After sync, **`lunar dashboard`** serves **`dist/`** with Python when **`pnpm`** is not installed. Use **`make deploy OFFLINE_PREP=0`** to skip the pnpm step when you only changed non-frontend files and already have a good **`dist/`** on disk.
 
 Python: `lunar/.venv` is still **excluded** from rsync (see `RSYNC_EXCLUDES`); build or sync the Jetson Python env separately if the robot cannot run `uv sync` online.
 
