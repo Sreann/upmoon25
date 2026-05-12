@@ -30,7 +30,7 @@ DEPLOY_PATHS = \
 	lunar \
 	src
 
-.PHONY: build up down restart shell sim dashboard run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
+.PHONY: build up down restart shell sim dashboard run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help test
 
 help:
 	@echo "upmoon25-auto Docker Management"
@@ -55,6 +55,7 @@ help:
 	@echo "  make install  - Install the lunar CLI (inside container)"
 	@echo "  make deploy   - Rsync source tree to the Jetson workspace"
 	@echo "  make deploy-dry-run - Preview Jetson rsync changes"
+	@echo "  make test       - Run native unit tests (encoder quadrature, etc.)"
 
 build:
 	docker compose build
@@ -112,3 +113,6 @@ deploy-dry-run:
 
 deploy:
 	rsync -azv --itemize-changes -e "ssh $(RSYNC_SSH_OPTS)" $(RSYNC_EXCLUDES) $(DEPLOY_PATHS) $(JETSON_HOST):$(JETSON_DIR)/
+
+test:
+	$(MAKE) -C firmware/arduino/tests test
