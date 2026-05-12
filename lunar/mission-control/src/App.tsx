@@ -41,19 +41,14 @@ import type { DemoScenario } from './bridge/mockSnapshot'
 import { useMissionBridge } from './bridge/useMissionBridge'
 import { AutonomyStateMachineChart } from './components/AutonomyStateMachineChart'
 import { ZoneMarkingPanel } from './components/ZoneMarkingPanel'
+import { useCameraFrame } from './hooks/useCameraFrame'
+import { useCameraWsBaseUrl } from './hooks/useCameraWsBaseUrl'
+import { useSensorWebSocket } from './hooks/useSensorWebSocket'
 
 const scenarioLabels: Record<DemoScenario, string> = {
   nominal: 'Nominal',
   degraded: 'Degraded',
   offline: 'Offline',
-}
-
-const cameraWsBaseUrl = import.meta.env.VITE_CAMERA_WS_BASE_URL as string | undefined
-
-const cameraSocketNames: Record<CameraStream['id'], string> = {
-  front: 'rgb',
-  rear: 'rear',
-  tracking: 'tracking',
 }
 
 function statusClass(status: HealthStatus = 'idle') {
@@ -235,51 +230,11 @@ function SafetyBar({
   )
 }
 
-function useCameraFrame(camera: CameraStream, enabled: boolean) {
-  const [frameUrl, setFrameUrl] = useState<string | null>(null)
-  const [socketState, setSocketState] = useState<StreamStatus>('unknown')
-
-  useEffect(() => {
-    if (!enabled || !cameraWsBaseUrl || camera.status !== 'live') {
-      return
-    }
-
-    let closed = false
-    let currentUrl: string | null = null
-    const wsBase = cameraWsBaseUrl.replace(/\/$/, '')
-    const socket = new WebSocket(`${wsBase}/camera/ws/${cameraSocketNames[camera.id]}`)
-    socket.binaryType = 'blob'
-
-    socket.onopen = () => setSocketState('connecting')
-    socket.onmessage = (event) => {
-      if (closed) return
-      const blob = event.data instanceof Blob ? event.data : new Blob([event.data], { type: 'image/jpeg' })
-      const nextUrl = URL.createObjectURL(blob)
-      setFrameUrl(nextUrl)
-      setSocketState('live')
-      if (currentUrl) URL.revokeObjectURL(currentUrl)
-      currentUrl = nextUrl
-    }
-    socket.onerror = () => setSocketState('stale')
-    socket.onclose = () => {
-      if (!closed) setSocketState('missing')
-    }
-
-    return () => {
-      closed = true
-      socket.close()
-      if (currentUrl) URL.revokeObjectURL(currentUrl)
-    }
-  }, [camera.id, camera.status, enabled])
-
-  return { frameUrl, socketState, configured: Boolean(cameraWsBaseUrl) }
-}
-
-function CameraFeed({ camera, liveFramesEnabled }: { camera: CameraStream; liveFramesEnabled: boolean }) {
-  const { frameUrl, socketState, configured } = useCameraFrame(camera, liveFramesEnabled)
-  const useLiveFrame = liveFramesEnabled && configured && camera.status === 'live'
-  const displayStatus = useLiveFrame ? socketState : camera.status
-  const activeFrameUrl = useLiveFrame && socketState === 'live' ? frameUrl : null
+function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string | undefined }) {
+  const { frameUrl, socketState, configured } = useCameraFrame(camera, wsBase)
+  const tryWs = Boolean(configured)
+  const displayStatus = tryWs ? socketState : camera.status
+  const activeFrameUrl = tryWs && socketState === 'live' ? frameUrl : null
   const statusText = {
     live: 'live',
     connecting: 'connecting',
@@ -288,10 +243,10 @@ function CameraFeed({ camera, liveFramesEnabled }: { camera: CameraStream; liveF
     unknown: 'unknown',
   }[displayStatus]
   const detail = {
-    live: activeFrameUrl ? 'Receiving frames from camera WebSocket' : 'Camera topic is live; frame stream not configured',
-    connecting: 'Camera WebSocket connecting or waiting for first frame',
-    stale: 'Last frame is too old; controls should not rely on this view',
-    missing: configured ? 'Camera frame WebSocket is unavailable' : 'Set VITE_CAMERA_WS_BASE_URL to display frames',
+    live: activeFrameUrl ? 'Receiving JPEG frames from camera_ws (Tornado)' : 'WebSocket open; waiting for first JPEG',
+    connecting: 'Connecting to camera WebSocket (auto-retry every 500 ms)',
+    stale: 'WebSocket error; retrying',
+    missing: configured ? 'Camera WebSocket closed or unreachable; retrying' : 'Could not resolve WebSocket base URL for this page',
     unknown: 'Camera has not been checked in this session',
   }[displayStatus]
   const accent = camera.id === 'front' ? 'border-orange-300' : camera.id === 'rear' ? 'border-sky-300' : 'border-slate-400'
@@ -598,17 +553,30 @@ function App() {
 
   const { mode, setMode: setBridgeModeInternal, snapshot, sendCommand, liveAvailable, liveStatus, liveUrl } = useMissionBridge(scenario)
 
+  const cameraWsBase = useCameraWsBaseUrl()
+  const sensorOverlay = useSensorWebSocket(cameraWsBase, snapshot)
+  const displaySnapshot = useMemo(() => {
+    if (!sensorOverlay) return snapshot
+    return {
+      ...snapshot,
+      trends: sensorOverlay.trends ?? snapshot.trends,
+      sensors: sensorOverlay.sensors,
+      metrics: sensorOverlay.metrics,
+      logs: sensorOverlay.logs,
+    }
+  }, [snapshot, sensorOverlay])
+
   function setMode(next: 'mock' | 'live') {
     setZoneArm(null)
     setBridgeModeInternal(next)
   }
 
-  const motionDisabled = !snapshot.mission.connected
+  const motionDisabled = !displaySnapshot.mission.connected
 
   const odomLive =
-    snapshot.zoneMarking?.odomStatus === 'live' ||
-    snapshot.topics.some((t) => t.topic === '/odom' && t.status === 'live')
-  const canZonePick = snapshot.mission.connected && odomLive && !motionDisabled
+    displaySnapshot.zoneMarking?.odomStatus === 'live' ||
+    displaySnapshot.topics.some((t) => t.topic === '/odom' && t.status === 'live')
+  const canZonePick = displaySnapshot.mission.connected && odomLive && !motionDisabled
 
   async function runCommand(command: Parameters<typeof sendCommand>[0]) {
     const result = await sendCommand(command)
@@ -618,7 +586,7 @@ function App() {
   return (
     <div className="min-h-screen bg-[#080b10] text-slate-200">
       <SafetyBar
-        snapshot={snapshot}
+        snapshot={displaySnapshot}
         scenario={scenario}
         setScenario={setScenario}
         bridgeMode={mode}
@@ -634,20 +602,30 @@ function App() {
           />
         ) : null}
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          {snapshot.metrics.map((metric) => (
+          {displaySnapshot.metrics.map((metric) => (
             <MetricCard key={metric.label} metric={metric} />
           ))}
         </section>
 
-        <MissionOverview snapshot={snapshot} />
+        <MissionOverview snapshot={displaySnapshot} />
         <EmptyState title="Latest command result" detail={commandStatus} status={commandStatus.startsWith('Rejected') ? 'bad' : commandStatus.startsWith('Accepted') ? 'ok' : 'idle'} />
-        <FallbackDiagnostics snapshot={snapshot} />
+        <FallbackDiagnostics snapshot={displaySnapshot} />
 
         <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]">
-          <Panel title="Live Cameras" icon={<Video className="h-4 w-4 text-cyan-300" />} action={<span className="text-xs text-slate-500">{cameraWsBaseUrl ? 'Camera WebSocket enabled' : 'Camera frames need VITE_CAMERA_WS_BASE_URL'}</span>}>
+          <Panel
+            title="Live Cameras"
+            icon={<Video className="h-4 w-4 text-cyan-300" />}
+            action={
+              <span className="text-xs text-slate-500">
+                {cameraWsBase
+                  ? `${cameraWsBase} · /camera/ws/*${sensorOverlay && !sensorOverlay.connected ? ' · /sensor/ws reconnecting' : ''}`
+                  : 'Resolving camera bridge URL (same host, port from VITE_CAMERA_WS_PORT or 8767)…'}
+              </span>
+            }
+          >
             <div className="grid gap-3 lg:grid-cols-3">
-              {snapshot.cameras.map((camera) => (
-                <CameraFeed key={camera.id} camera={camera} liveFramesEnabled={mode === 'live'} />
+              {displaySnapshot.cameras.map((camera) => (
+                <CameraFeed key={camera.id} camera={camera} wsBase={cameraWsBase} />
               ))}
             </div>
           </Panel>
@@ -657,7 +635,7 @@ function App() {
               <div className="space-y-1.5">
                 {zoneArm ? <p className="text-center text-xs text-amber-200">Click map</p> : null}
                 <TerrainGrid
-                  grid={snapshot.terrainGrid}
+                  grid={displaySnapshot.terrainGrid}
                   pickArmed={zoneArm !== null}
                   pickEnabled={canZonePick}
                   onPick={(p) => {
@@ -676,9 +654,9 @@ function App() {
               </div>
               <div className="min-w-0 space-y-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <MetricCard metric={{ label: 'Obstacles', value: snapshot.terrainGrid ? String(snapshot.terrainGrid.obstacleCells) : '--', detail: snapshot.terrainGrid?.note ?? 'terrain grid', status: snapshot.terrainGrid?.status === 'live' ? 'ok' : snapshot.terrainGrid ? 'warn' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Pothole risk', value: snapshot.terrainGrid ? String(snapshot.terrainGrid.cautionCells) : '--', detail: 'caution cells', status: snapshot.terrainGrid && snapshot.terrainGrid.cautionCells > 0 ? 'warn' : snapshot.terrainGrid ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Unknown cells', value: snapshot.terrainGrid ? String(snapshot.terrainGrid.unknownCells) : '--', detail: snapshot.terrainGrid?.frameId ?? 'base_link', status: snapshot.terrainGrid && snapshot.terrainGrid.unknownCells > 0 ? 'warn' : snapshot.terrainGrid ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Obstacles', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.obstacleCells) : '--', detail: displaySnapshot.terrainGrid?.note ?? 'terrain grid', status: displaySnapshot.terrainGrid?.status === 'live' ? 'ok' : displaySnapshot.terrainGrid ? 'warn' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Pothole risk', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.cautionCells) : '--', detail: 'caution cells', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.cautionCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Unknown cells', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.unknownCells) : '--', detail: displaySnapshot.terrainGrid?.frameId ?? 'base_link', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.unknownCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
                   <MetricCard metric={{ label: 'Steering', value: scenario === 'nominal' ? 'forward' : 'hold', detail: scenario === 'nominal' ? 'short segment' : 'no target', status: scenario === 'nominal' ? 'ok' : 'idle' }} />
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -693,7 +671,7 @@ function App() {
 
         <section className="grid gap-4 xl:grid-cols-[1fr_1.2fr_1fr]">
           <Panel title="Zone marking" icon={<Flag className="h-4 w-4 text-orange-300" />}>
-            <ZoneMarkingPanel snapshot={snapshot} armedZone={zoneArm} onArm={setZoneArm} canArm={canZonePick} />
+            <ZoneMarkingPanel snapshot={displaySnapshot} armedZone={zoneArm} onArm={setZoneArm} canArm={canZonePick} />
           </Panel>
 
           <Panel title="Manual Teleop" icon={<Gauge className="h-4 w-4 text-cyan-300" />}>
@@ -749,15 +727,15 @@ function App() {
         <section className="grid gap-4 xl:grid-cols-[1fr_1fr]">
           <Panel title="Analytics And Pulse" icon={<BarChart3 className="h-4 w-4 text-cyan-300" />}>
             <div className="grid gap-3 lg:grid-cols-3">
-              <MiniTrend title="CPU load" values={snapshot.trends.map((point) => point.cpu)} suffix="%" />
-              <MiniTrend title="CPU temp" values={snapshot.trends.map((point) => point.temp)} suffix=" C" />
-              <MiniTrend title="Battery" values={snapshot.trends.map((point) => point.battery)} suffix=" V" />
+              <MiniTrend title="CPU load" values={displaySnapshot.trends.map((point) => point.cpu)} suffix="%" />
+              <MiniTrend title="CPU temp" values={displaySnapshot.trends.map((point) => point.temp)} suffix=" C" />
+              <MiniTrend title="Battery" values={displaySnapshot.trends.map((point) => point.battery)} suffix=" V" />
             </div>
             <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_1fr]">
               <div className="rounded-md border border-slate-800 bg-slate-900 p-3">
                 <div className="text-xs uppercase tracking-wide text-slate-500">Odometry vs command velocity</div>
                 <div className="mt-3 grid grid-cols-12 items-end gap-1">
-                  {snapshot.trends.map((point) => (
+                  {displaySnapshot.trends.map((point) => (
                     <div key={point.label} className="flex h-24 flex-col justify-end gap-1">
                       <div className="rounded-t bg-purple-400/70" style={{ height: `${Math.max(6, point.odomVelocity * 300)}px` }} title={`odom ${point.odomVelocity}`} />
                       <div className="rounded-t bg-cyan-300/80" style={{ height: `${Math.max(6, point.commandVelocity * 300)}px` }} title={`cmd ${point.commandVelocity}`} />
@@ -769,7 +747,7 @@ function App() {
                   <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded bg-cyan-300" /> command</span>
                 </div>
               </div>
-              <IrRadar left={snapshot.sensors.irLeft} right={snapshot.sensors.irRight} />
+              <IrRadar left={displaySnapshot.sensors.irLeft} right={displaySnapshot.sensors.irRight} />
             </div>
           </Panel>
 
@@ -785,7 +763,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {snapshot.hardware.map((row) => (
+                  {displaySnapshot.hardware.map((row) => (
                     <tr key={row.name} className="border-t border-slate-800 bg-slate-950">
                       <td className="px-3 py-2 text-slate-400">{row.category}</td>
                       <td className="px-3 py-2 text-slate-100">{row.name}</td>
@@ -820,20 +798,20 @@ function App() {
                   </label>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Button disabled={!snapshot.mission.connected} intent="danger" onClick={() => void runCommand({ type: 'recording', enabled: true, name: bagName })}>Start Bag</Button>
-                  <Button disabled={!snapshot.mission.connected} onClick={() => void runCommand({ type: 'recording', enabled: false })}>Stop Bag</Button>
-                  <Button disabled={!snapshot.mission.connected} onClick={() => void runCommand({ type: 'save_map', name: mapName })}><Save className="h-4 w-4" /> Save Map</Button>
-                  <Button disabled={!snapshot.mission.connected}>Event Marker</Button>
+                  <Button disabled={!displaySnapshot.mission.connected} intent="danger" onClick={() => void runCommand({ type: 'recording', enabled: true, name: bagName })}>Start Bag</Button>
+                  <Button disabled={!displaySnapshot.mission.connected} onClick={() => void runCommand({ type: 'recording', enabled: false })}>Stop Bag</Button>
+                  <Button disabled={!displaySnapshot.mission.connected} onClick={() => void runCommand({ type: 'save_map', name: mapName })}><Save className="h-4 w-4" /> Save Map</Button>
+                  <Button disabled={!displaySnapshot.mission.connected}>Event Marker</Button>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <MetricCard metric={{ label: 'CPU', value: snapshot.mission.connected ? '29%' : '--', detail: 'demo', status: snapshot.mission.connected ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Temp', value: snapshot.mission.connected ? '54 C' : '--', detail: 'Jetson', status: snapshot.mission.connected ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'WiFi', value: snapshot.mission.connected ? '18 ms' : '--', detail: 'ping', status: snapshot.mission.connected ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Disk', value: snapshot.mission.connected ? '72 GB' : '--', detail: 'bags', status: snapshot.mission.connected ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'CPU', value: displaySnapshot.mission.connected ? '29%' : '--', detail: 'demo', status: displaySnapshot.mission.connected ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Temp', value: displaySnapshot.mission.connected ? '54 C' : '--', detail: 'Jetson', status: displaySnapshot.mission.connected ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'WiFi', value: displaySnapshot.mission.connected ? '18 ms' : '--', detail: 'ping', status: displaySnapshot.mission.connected ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Disk', value: displaySnapshot.mission.connected ? '72 GB' : '--', detail: 'bags', status: displaySnapshot.mission.connected ? 'ok' : 'bad' }} />
                 </div>
               </div>
               <div className="rounded-md border border-slate-800 bg-black p-3 font-mono text-xs text-emerald-200">
-                {snapshot.logs.map((line) => (
+                {displaySnapshot.logs.map((line) => (
                   <div key={`${line.ts}-${line.message}`} className={clsx(line.level === 'error' && 'text-red-300', line.level === 'warn' && 'text-amber-200')}>
                     {line.ts} {line.message}
                   </div>
@@ -844,7 +822,7 @@ function App() {
         </section>
 
         <Panel title="Autonomy state machine" icon={<Activity className="h-4 w-4 text-cyan-300" />}>
-          <AutonomyStateMachineChart current={snapshot.mission.state} />
+          <AutonomyStateMachineChart current={displaySnapshot.mission.state} />
         </Panel>
 
         <section className="grid gap-4 xl:grid-cols-2">
@@ -858,9 +836,9 @@ function App() {
           </Panel>
           <Panel title="Advanced Controls" icon={<Terminal className="h-4 w-4 text-slate-300" />}>
             <div className="grid grid-cols-2 gap-2">
-              <Button disabled={!snapshot.mission.connected}>Restart Mapper</Button>
-              <Button disabled={!snapshot.mission.connected}>Restart Bridge</Button>
-              <Button disabled={!snapshot.mission.connected}>Apply PID</Button>
+              <Button disabled={!displaySnapshot.mission.connected}>Restart Mapper</Button>
+              <Button disabled={!displaySnapshot.mission.connected}>Restart Bridge</Button>
+              <Button disabled={!displaySnapshot.mission.connected}>Apply PID</Button>
               <Button>Open Foxglove</Button>
             </div>
             <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100">
@@ -884,19 +862,19 @@ function App() {
                     max={key === 'kp' ? 10 : 5}
                     step={key === 'kp' ? 0.1 : 0.01}
                     value={pid[key]}
-                    disabled={!snapshot.mission.connected}
+                    disabled={!displaySnapshot.mission.connected}
                     onChange={(event) => setPid((current) => ({ ...current, [key]: Number(event.target.value) }))}
                     className="w-full accent-cyan-400 disabled:opacity-40"
                   />
                 </label>
               ))}
-              <Button disabled={!snapshot.mission.connected} onClick={() => void runCommand({ type: 'pid', gains: pid })}>Apply Gains</Button>
+              <Button disabled={!displaySnapshot.mission.connected} onClick={() => void runCommand({ type: 'pid', gains: pid })}>Apply Gains</Button>
             </div>
           </Panel>
 
           <Panel title="Field Audit Checklist" icon={<ShieldAlert className="h-4 w-4 text-amber-300" />}>
             <div className="space-y-2">
-              {snapshot.audit.map((item) => (
+              {displaySnapshot.audit.map((item) => (
                 <div key={item.label} className={clsx('rounded border p-2 text-sm', statusClass(item.status))}>
                   <div className="flex items-center gap-2 font-semibold text-white">
                     <AlertDot status={item.status} />
@@ -910,7 +888,7 @@ function App() {
 
           <Panel title="Raw Config And Debug" icon={<Terminal className="h-4 w-4 text-slate-300" />}>
             <pre className="max-h-72 overflow-auto rounded border border-slate-800 bg-black p-3 text-xs text-emerald-200">
-              {snapshot.rawConfig}
+              {displaySnapshot.rawConfig}
             </pre>
           </Panel>
         </section>
