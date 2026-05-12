@@ -35,6 +35,7 @@ uv run lunar sim --world ../gz_worlds/arena1.world --port 8765
 ## Quality (from **repo root**)
 
 ```bash
+make test-firmware   # native encoder quadrature unit tests only (g++; no ROS / uv)
 make test    # lint + offline Python tests + mission-control eslint
 make ci      # same + production Vite build
 make tune-flags input=field_photos/in output=field_photos/out
