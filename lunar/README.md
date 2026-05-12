@@ -17,7 +17,7 @@ uv run lunar sim --world ../gz_worlds/arena1.world --port 8765
 
 | Command | What it runs |
 |---------|----------------|
-| **`lunar dashboard`** | React **mission-control** (Vite dev server). Default **port 8501**, background by default. |
+| **`lunar dashboard`** | React **mission-control**: **Vite** if `pnpm` is available, else **static `dist/`** via Python `http.server` (build on a dev machine first). Default **port 8501**, background by default. |
 | **`lunar mission-control`** | Same app; explicit name. |
 | **`lunar streamlit-dashboard`** | Legacy **Streamlit** Command Center + camera WebSocket helper (default port 8501 for Streamlit). |
 | **`lunar mission-bridge`** | Safe WebSocket bridge for mission-control telemetry/commands. |
