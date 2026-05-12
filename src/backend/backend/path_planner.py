@@ -5,7 +5,6 @@ import tf2_geometry_msgs
 
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from rclpy.action import ActionServer
 from interfaces.srv import FindPath
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
 from geometry_msgs.msg import PoseStamped, Pose
@@ -70,12 +69,12 @@ class PathPlanner(Node):
 
     # Gets the robots position in the map frame
     def getRobotMapPose(self):
-        if (self.odom == None):
+        if (self.odom is None):
             return None
 
         # Get the transform from odom to map
         transform = None
-        while (transform == None):
+        while (transform is None):
             transform = self.lookupTransform('map', 'odom')
 
         # Transform the odom pose to the map frame
@@ -371,10 +370,10 @@ class PathPlanner(Node):
     # Checks that our current path doesn't run through an obstacle
     # Also checks that the end pose of the path is not an obstacle
     def updateCurrPath(self):
-        if (self.goal == None):
+        if (self.goal is None):
             return
         
-        if (self.curr_path == None):
+        if (self.curr_path is None):
             # TODO This is repeated code which should be refactored
             robo_pose = self.getRobotMapPose()
             # We keep current path unsimplified because it makes checking if it runs through an obstacle easier

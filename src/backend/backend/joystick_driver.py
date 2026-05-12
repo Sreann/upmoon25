@@ -20,7 +20,7 @@ from rclpy.node import Node
 from pygame.locals import *
 
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Float64, Int16
+from std_msgs.msg import Int16
 
 # Controller Axes (return -1.0 to 1.0)
 LJOY_X = 0

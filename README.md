@@ -65,3 +65,9 @@ If you want to launch with a world, include the parameter `world:="path to world
 `ros2 launch backend launch.py world:=~/robotics/upmoon25/gz_worlds/arena1.world`
 
 If you want to launch headless (no GUI), include the parameter `gui:=false`
+
+## Developer tools
+
+- **Offline tests + lint:** from repo root, `make test` or `make ci` (includes mission-control production build).
+- **Shadow autonomy stack:** `lunar autonomy-stack` (perception health, local terrain grid, flag detector, autonomy supervisor). See `lunar/.plans/` for roadmap.
+- **Arena flag photos (no ROS):** `make tune-flags` with images in `field_photos/in` → overlays in `field_photos/out` (folders gitignored by default).

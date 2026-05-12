@@ -1,11 +1,9 @@
 import rclpy
-import os
 
-from enum import Enum
 from rclpy.node import Node, QoSProfile
-from std_msgs.msg import Int8, Header
+from std_msgs.msg import Int8
 from interfaces.srv import FindTag, GoTo
-from geometry_msgs.msg import Pose, Quaternion, PoseStamped, Point
+from geometry_msgs.msg import PoseStamped, Point
 
 
 '''
@@ -110,7 +108,7 @@ class Miner(Command):
         
         if (args[0] == 'mark' or args[0] == 'recdump' or args[0] == 'recinit'):
             if len(args) < 2:
-                self.node.get_logger().error(f'Missing distance arg')
+                self.node.get_logger().error('Missing distance arg')
                 return
             
             dist = float(args[1])

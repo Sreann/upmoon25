@@ -30,7 +30,11 @@ DEPLOY_PATHS = \
 	lunar \
 	src
 
-.PHONY: build up down restart shell sim dashboard run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
+ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+input ?= field_photos/in
+output ?= field_photos/out
+
+.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-build autonomy-stack lint test test-offline ci tune-flags run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
 
 help:
 	@echo "upmoon25-auto Docker Management"
@@ -42,7 +46,16 @@ help:
 	@echo "  make restart  - Restart the container"
 	@echo "  make shell    - Enter the container's shell"
 	@echo "  make sim world=gz_worlds/basic.world - Start simulation"
-	@echo "  make dashboard - Launch the dashboard in the container"
+	@echo "  make dashboard - Launch React mission-control in the container (default port 8501)"
+	@echo "  make tune-flags input=... output=... - Batch flag detection on images (no ROS; defaults field_photos/in out)"
+	@echo "  make mission-bridge - Launch the safe-command mission-control ROS bridge"
+	@echo "  make mission-control - Launch the new web mission-control app"
+	@echo "  make mission-control-build - Build the new web mission-control app"
+	@echo "  make autonomy-stack grid=[coarse|standard|fine] - Launch shadow-mode perception/autonomy nodes"
+	@echo "  make lint       - ty check + ruff + mission-control eslint"
+	@echo "  make test       - lint + all offline Python unit tests"
+	@echo "  make test-offline - Run hardware-free backend/bridge unit tests only"
+	@echo "  make ci         - lint + mission-control production build + offline tests (no Jetson)"
 	@echo "  make run profile=[robot|rc|autonomy] - Run specialized profile"
 	@echo "  make kill     - Stop all simulation and ROS processes"
 	@echo "  make logs     - View logs"
@@ -79,6 +92,41 @@ sim:
 
 dashboard:
 	docker exec -it upmoon25_ros lunar dashboard
+
+mission-bridge:
+	docker exec -it upmoon25_ros lunar mission-bridge --foreground
+
+mission-control:
+	cd lunar/mission-control && pnpm dev --host 0.0.0.0 --port 8501
+
+mission-control-build:
+	cd lunar/mission-control && pnpm build
+
+autonomy-stack:
+	docker exec -it upmoon25_ros lunar autonomy-stack --grid-preset $(or $(grid),standard)
+
+lint:
+	@if [ -x "$(ROOT)/lunar/.venv/bin/python" ]; then \
+		cd "$(ROOT)" && uvx ty check src/backend lunar/src --python "$(ROOT)/lunar/.venv/bin/python"; \
+	else \
+		cd "$(ROOT)" && uvx ty check src/backend lunar/src; \
+	fi
+	cd "$(ROOT)" && uvx ruff check src/backend lunar/src
+	cd "$(ROOT)/lunar/mission-control" && pnpm lint
+
+test: lint
+	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
+
+test-offline:
+	cd $(ROOT)/lunar && uv run python ../src/backend/test/run_offline_unit_tests.py
+
+ci: lint
+	cd "$(ROOT)/lunar/mission-control" && pnpm build
+	cd "$(ROOT)/lunar" && uv run python ../src/backend/test/run_offline_unit_tests.py
+
+tune-flags:
+	@mkdir -p "$(ROOT)/$(output)"
+	cd "$(ROOT)" && PYTHONPATH="$(ROOT)/src/backend" uv run --project lunar python "$(ROOT)/src/backend/scripts/tune_flags_on_images.py" --input "$(ROOT)/$(input)" --output "$(ROOT)/$(output)"
 
 run:
 	docker exec -it upmoon25_ros lunar run $(profile)

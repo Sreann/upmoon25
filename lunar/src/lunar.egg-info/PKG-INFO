@@ -2,7 +2,7 @@ Metadata-Version: 2.1
 Name: lunar
 Version: 0.1.0
 Summary: UPR robot CLI for simulation + visualization
-Requires-Python: <3.9,>=3.8
+Requires-Python: <3.9,>=3.8.1
 Description-Content-Type: text/markdown
 Requires-Dist: typer>=0.12.3
 Requires-Dist: tomli>=2.0.1
@@ -18,6 +18,7 @@ Requires-Dist: catkin_pkg
 Requires-Dist: lark
 Requires-Dist: PyYAML
 Requires-Dist: netifaces
+Requires-Dist: textual==0.86.3
 
 # lunar
 
