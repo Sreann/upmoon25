@@ -1,0 +1,13 @@
+# Root meta-config for tooling (ROS workspace). Lunar package specifics stay in lunar/pyproject.toml.
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.src]
+# ROS packages need a sourced workspace; typecheck the lunar CLI/dashboard only.
+exclude = [
+  "src/**",
+  "firmware/**",
+]
+
+[tool.ty.rules]
+unresolved-import = "ignore"

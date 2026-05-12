@@ -4,20 +4,16 @@ import pyapriltags
 import numpy as np
 import tf2_ros
 import tf2_geometry_msgs
-import quaternion
 import time
 
 from rclpy.node import Node, QoSProfile
-from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
 
 from enum import Enum
 from sensor_msgs.msg import Image, CameraInfo
 from cv_bridge import CvBridge
-from std_msgs.msg import Header, ColorRGBA, String, Int16
-from visualization_msgs.msg import Marker
-from geometry_msgs.msg import Pose, Vector3, Point, Quaternion, PoseStamped
-from builtin_interfaces.msg import Duration
+from std_msgs.msg import Header, String, Int16
+from geometry_msgs.msg import Pose, Point, Quaternion, PoseStamped
 from scipy.spatial.transform import Rotation as R
 from threading import Condition
 
@@ -197,8 +193,6 @@ class CamTester(Node):
         self.cam_mtx[1][1] = msg.k[4]
         self.cam_mtx[1][2] = msg.k[5]
 
-        IMG_HEIGHT = msg.height
-        IMG_WIDTH  = msg.width
         
         self.get_logger().info("Found camera info. Now receiving images")
         # Unsubscribe from caminfo topic and begin receiving images
@@ -226,14 +220,14 @@ class CamTester(Node):
         time = self.get_clock().now().to_msg()
 
         # Haven't found a detection: keep rotating until we find one
-        if (detection == None):
+        if (detection is None):
             self.sendServoCMD(self.prev_direction)
             return
         
         # Found tag: determine where the center is on the screen and move sensor accordingly
         tag_x = round(detection.center[0])
-        tag_y = round(detection.center[1]) # Might need this for linear actuator code
-        x_diff = (IMG_WIDTH // 2) - tag_x
+        round(detection.center[1]) # Might need this for linear actuator code
+        (IMG_WIDTH // 2) - tag_x
 
         #if (x_diff > IMG_TOLERANCE):
         #    self.sendServoCMD(ServoCMD.RIGHT)
@@ -270,7 +264,7 @@ class CamTester(Node):
         else:
             return None
 
-        if (self.last_img_received != None):
+        if (self.last_img_received is not None):
             detections = getDetections(self.last_img_received)
 
         self.last_img_received = None
@@ -294,7 +288,7 @@ class CamTester(Node):
                 transform = self.tf_buffer.lookup_transform(
                     'base_link', 'rgb_link_optical', stamp, rclpy.duration.Duration(seconds=1.0)  
                 )
-            except Exception as e:
+            except Exception:
                 return
         # This is so lame, but the constructor doesn't work :(
         # Rotation is handled later

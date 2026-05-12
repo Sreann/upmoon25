@@ -1,6 +1,6 @@
 import os
 from glob import glob
-from setuptools import setup, find_packages
+from setuptools import setup
 
 package_name = 'backend'
 
@@ -42,6 +42,7 @@ setup(
             'rgb_transport = backend.rgb_transport:main',
             'joystick_driver = backend.joystick_driver:main',
             'keyboard_driver_comp = backend.keyboard_driver_comp:main',
+            'dig_sequence = backend.dig_sequence_controller:main',
         ],
     },
 )

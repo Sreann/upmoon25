@@ -2,11 +2,6 @@ import launch
 import os
 import xacro
 from ament_index_python.packages import get_package_share_directory
-from launch.actions import IncludeLaunchDescription, RegisterEventHandler
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import ThisLaunchFileDir, PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
-from launch.event_handlers import OnProcessExit
 
 
 from launch_ros.actions import Node
@@ -53,14 +48,14 @@ def generate_launch_description():
         output='screen',
     )
 
-    arduino_driver = Node(
+    Node(
         package='frontend',
         executable='arduino_driver',
         name='arduino_driver_node',
         output='screen'
     )
 
-    joint_state = Node(
+    Node(
         package='joint_state_publisher',
         executable='joint_state_publisher',
         output='screen',

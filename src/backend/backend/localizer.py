@@ -4,7 +4,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Int8, Float32
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 from tf2_ros.transform_broadcaster import TransformBroadcaster
-from geometry_msgs.msg import TransformStamped, PoseWithCovariance
+from geometry_msgs.msg import TransformStamped
 from interfaces.srv import FindTag
 
 import numpy as np
