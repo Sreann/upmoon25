@@ -14,13 +14,13 @@ import tty
 from pathlib import Path
 from dataclasses import asdict
 from enum import Enum
-from typing import Optional
+from typing import Optional, TextIO, cast
 
 import typer
 import serial.tools.list_ports
 
 from .config import Config, CONFIG_PATH, find_repo_root
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
 from .process import spawn, save_state, kill_all
 
 app = typer.Typer(add_completion=False)
@@ -35,6 +35,7 @@ class RunProfile(str, Enum):
     RC = "rc"
     AUTONOMY = "autonomy"
     TEST_ENCODER = "test-encoder"
+    DIG = "dig"
 
 
 class ControlTarget(str, Enum):
@@ -292,6 +293,7 @@ def _force_cleanup_runtime_processes() -> list[str]:
         "[t]265_driver",
         "[c]onveyor",
         "[m]ining_controller",
+        "[r]os2 run backend dig_sequence",
         "[t]ag_detector",
         "[f]oxglove_bridge",
         "[s]treamlit run .*lunar/src/lunar/dashboard/app.py",
@@ -574,7 +576,8 @@ def _run_terminal_subsystem_keyboard(
     bucket_pos = 0
     conveyor = 0
     bucket_vel = 0
-    bucket_pos_step = 1
+    bucket_pos_coarse_step = step
+    bucket_pos_fine_step = 1
     last_status = 0.0
     last_bucket_ts = 0.0
     hold_timeout = 0.25
@@ -588,28 +591,28 @@ def _run_terminal_subsystem_keyboard(
     def set_camera_height(value: int):
         nonlocal camera_height
         camera_height = max(0, min(100, int(value)))
-        if direct_ready and arduino.write(ARDUINO_CAM_HEIGHT_PIN, camera_height):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_CAM_HEIGHT_PIN, camera_height):
             return
         publish(pub_cam_height, camera_height)
 
     def set_pan(value: int):
         nonlocal pan
-        pan = max(10, min(170, int(value)))
-        if direct_ready and arduino.write(ARDUINO_PAN_PIN, pan):
+        pan = clamp_pan_angle(value)
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_PAN_PIN, pan):
             return
         publish(pub_pan, pan)
 
     def set_bucket_pos(value: int):
         nonlocal bucket_pos
         bucket_pos = max(0, min(100, int(value)))
-        if direct_ready and arduino.write(ARDUINO_BUCKET_PIN, bucket_pos):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_BUCKET_PIN, bucket_pos):
             return
         publish(pub_bucket_pos, bucket_pos)
 
     def set_conveyor(value: int):
         nonlocal conveyor
         conveyor = 1 if int(value) else 0
-        if direct_ready and arduino.write(ARDUINO_CONVEYOR_PIN, conveyor):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_CONVEYOR_PIN, conveyor):
             return
         publish(pub_conveyor, conveyor)
 
@@ -658,7 +661,7 @@ def _run_terminal_subsystem_keyboard(
     if "pan" in subsystems:
         typer.echo("pan: h/l left/right, m center")
     if "bucket-pos" in subsystems:
-        typer.echo("bucket position: i/k up/down")
+        typer.echo("bucket position: i/k coarse (±step) | I/K fine (±1)")
     if "bucket-vel" in subsystems:
         typer.echo("bucket chain: r/f forward/reverse while key repeats")
     if "conveyor" in subsystems:
@@ -696,9 +699,13 @@ def _run_terminal_subsystem_keyboard(
                     elif "pan" in subsystems and key == "m":
                         set_pan(90)
                     elif "bucket-pos" in subsystems and key == "i":
-                        set_bucket_pos(bucket_pos + bucket_pos_step)
+                        set_bucket_pos(bucket_pos + bucket_pos_coarse_step)
                     elif "bucket-pos" in subsystems and key == "k":
-                        set_bucket_pos(bucket_pos - bucket_pos_step)
+                        set_bucket_pos(bucket_pos - bucket_pos_coarse_step)
+                    elif "bucket-pos" in subsystems and key == "I":
+                        set_bucket_pos(bucket_pos + bucket_pos_fine_step)
+                    elif "bucket-pos" in subsystems and key == "K":
+                        set_bucket_pos(bucket_pos - bucket_pos_fine_step)
                     elif "bucket-vel" in subsystems and key == "r":
                         set_bucket_vel(40)
                     elif "bucket-vel" in subsystems and key == "f":
@@ -872,7 +879,7 @@ def sim(
         while True:
             events = sel.select(timeout=1.0)
             for key, mask in events:
-                line = key.fileobj.readline()
+                line = cast(TextIO, key.fileobj).readline()
                 if line:
                     typer.secho(f"[{key.data}] {line.strip()}", dim=True)
     except KeyboardInterrupt:
@@ -885,21 +892,32 @@ def run(
     profile: RunProfile = typer.Argument(
         ...,
         help=(
-            "The execution profile to use:\n\n"
-            "- robot: Launch frontend drivers for physical robot operation.\n"
-            "- rc: Launch joystick and recording tools for remote control.\n"
-            "- autonomy: Launch the high-level autonomy stack (mapping, planning).\n"
-            "- test-encoder: Launch drive + Arduino, run 5s forward / 5s backward, then exit."
+            "The execution profile:\n\n"
+            "- robot: Frontend drivers on the Jetson/comp stack.\n"
+            "- rc: Joystick / RViz (and optional rosbag).\n"
+            "- autonomy: Planner / transport / command stack.\n"
+            "- test-encoder: Drive + Arduino, 5s forward / 5s backward encoder test, then exit.\n"
+            "- dig: Foreground autonomous dig cycle (needs robot drivers; use --calibrated-rotary)."
         ),
     ),
     record: bool = typer.Option(False, "--record", help="Start a rosbag recording of odom and camera data (RC profile only)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be run for this profile."),
+    calibrated_rotary: Optional[int] = typer.Option(
+        None,
+        "--calibrated-rotary",
+        help="dig profile only: Wheel encoder ticks to reach on each forward phase (positive target).",
+    ),
+    encoder_side: str = typer.Option(
+        "left",
+        "--encoder-side",
+        help="dig profile only: Subscribe to /sensor/encoder/left or right.",
+    ),
 ):
     """
-    Execute high-level system profiles for Robot, RC, Autonomy, or encoder testing.
+    Execute high-level system profiles for Robot, RC, Autonomy, test-encoder, or Dig.
 
-    Profiles are pre-configured sets of ROS 2 nodes tailored for specific tasks.
-    They run in the background, and their state is tracked for 'lunar kill'.
+    robot/rc/autonomy/test-encoder run ROS nodes in the background (see 'lunar kill').
+    dig runs the calibrated dig_sequence node in the foreground until it finishes or you Ctrl-C.
     """
     root = find_repo_root()
     log_path = root / ".lunar" / f"run_{profile.value}.log"
@@ -921,6 +939,42 @@ def run(
 
     elif profile == RunProfile.TEST_ENCODER:
         cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
+
+    elif profile == RunProfile.DIG:
+        if calibrated_rotary is None or calibrated_rotary <= 0:
+            typer.secho(
+                "Profile 'dig' requires --calibrated-rotary <positive_ticks> "
+                "(forward phase stops near this encoder reading).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        side = encoder_side.strip().lower()
+        if side not in ("left", "right"):
+            typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+        ensure_env()
+        dig_cmd = [
+            "ros2",
+            "run",
+            "backend",
+            "dig_sequence",
+            "--ros-args",
+            "-p",
+            f"calibrated_rotary:={calibrated_rotary}",
+            "-p",
+            f"encoder_side:={side}",
+        ]
+        if dry_run:
+            typer.echo(" ".join(shlex.quote(x) for x in dig_cmd))
+            return
+
+        typer.secho(
+            "Starting dig sequence in the foreground... (Ctrl-C to abort; ensure lunar run robot already.)",
+            fg=typer.colors.YELLOW,
+        )
+        subprocess.run(dig_cmd, check=False)
+        return
 
     if dry_run:
         for name, cmd in cmds:
@@ -956,7 +1010,7 @@ def keyboard(
         "--subsystems",
         help="Comma-separated subsystems to enable: drive,camera-height,pan,bucket-pos,bucket-vel,conveyor,all. Defaults to all.",
     ),
-    step: int = typer.Option(5, "--step", min=1, max=25, help="Increment for position-style controls."),
+    step: int = typer.Option(5, "--step", min=1, max=25, help="Increment for camera height, pan, and coarse bucket position (i/k). Fine bucket moves use ±1 (Shift+I / Shift+K in TUI, I/K in --raw)."),
     ros_only: bool = typer.Option(True, "--ros-only/--direct-serial", help="Publish ROS topics only by default; use --direct-serial only for standalone camera-height or pan tests."),
     raw: bool = typer.Option(False, "--raw", help="Use the legacy raw terminal loop instead of the Textual TUI."),
     drive_speed: float = typer.Option(35.0, "--drive-speed", help="Drive command magnitude for W/S in robot units."),
@@ -976,6 +1030,8 @@ def keyboard(
     Keymap:
     - U/J : camera height up/down
     - 0/1 : camera height min/max
+    - I/K : bucket position up/down (coarse; same step as --step)
+    - Shift+I / Shift+K : bucket position ±1 (fine)
     - Space : stop transient actuators
     - Q : quit
 
@@ -1151,7 +1207,7 @@ def act(
             )
             raise typer.Exit(code=2)
 
-        int_value = max(10, min(170, int_value))
+        int_value = clamp_pan_angle(int_value)
         if _write_arduino_value(ARDUINO_PAN_PIN, int_value):
             typer.echo(f"Acting on {actuator.value}: direct-serial angle={int_value} -> Arduino pin {ARDUINO_PAN_PIN}")
             return
@@ -1249,6 +1305,7 @@ def build(
     subprocess.run(["pkill", "-f", "depth_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "t265_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "mining_controller"], stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-f", "dig_sequence"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "tag_detector"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "conveyor"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-9", "gzserver"], stderr=subprocess.DEVNULL)
@@ -1299,6 +1356,19 @@ def build(
     ensure_env(force=True)
     typer.echo(f"ROS_DISTRO={os.environ.get('ROS_DISTRO', 'unknown')}")
     typer.echo(f"ROS_DOMAIN_ID={os.environ.get('ROS_DOMAIN_ID', 'unset')}")
+
+    app_dir = root / "lunar" / "mission-control"
+    if shutil.which("pnpm") is not None and (app_dir / "package.json").exists():
+        if not (app_dir / "node_modules").exists():
+            typer.echo("Installing mission-control dependencies (pnpm install)...")
+            subprocess.run(["pnpm", "install"], cwd=str(app_dir))
+        typer.echo("Building mission-control (pnpm build) for `lunar dashboard` static mode...")
+        res_mc = subprocess.run(["pnpm", "build"], cwd=str(app_dir))
+        if res_mc.returncode != 0:
+            typer.secho(
+                "mission-control pnpm build failed (dashboard may need `pnpm build` on a dev machine).",
+                fg=typer.colors.YELLOW,
+            )
 
     try:
         _flash_servo_firmware(root)
@@ -1420,7 +1490,7 @@ def check(
     def run_cmd(cmd, timeout=2.0):
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
-        except (subprocess.TimeoutExpired, OSError):
+        except (OSError, subprocess.TimeoutExpired, ValueError):
             return ""
 
     # --- Hardware Checks ---
@@ -1645,9 +1715,9 @@ def check(
         with open(log_path, "r") as f:
             lines = f.readlines()
             results["recent_errors"] = [
-                line.strip()
-                for line in lines
-                if "ERROR" in line.upper() or "process has died" in line.upper()
+                ln.strip()
+                for ln in lines
+                if "ERROR" in ln.upper() or "process has died" in ln.upper()
             ][-8:]
 
     if json_out:
@@ -1748,9 +1818,9 @@ def check(
 
     typer.echo("\n[Recent Errors/Warnings]")
     if results["recent_errors"]:
-        for err_line in results["recent_errors"]:
-            color = typer.colors.RED if "ERROR" in err_line.upper() or "died" in err_line.upper() else typer.colors.YELLOW
-            typer.secho(f"  {err_line}", fg=color)
+        for err_ln in results["recent_errors"]:
+            color = typer.colors.RED if "ERROR" in err_ln.upper() or "died" in err_ln.upper() else typer.colors.YELLOW
+            typer.secho(f"  {err_ln}", fg=color)
     else:
         typer.secho("  No critical errors found in log.", fg=typer.colors.GREEN)
 
@@ -1760,7 +1830,10 @@ def check(
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             while True:
-                line = proc.stdout.readline()
+                out = proc.stdout
+                if out is None:
+                    break
+                line = out.readline()
                 if not line:
                     break
                 if any(x in line for x in ["level: 30", "level: 40", "level: 50"]):
@@ -1972,7 +2045,43 @@ def autonomy_stack(
         typer.echo("Foreground log streaming is not implemented for this command yet; use 'lunar logs'.")
 
 
-def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_name: str) -> None:
+def _ros_source_env_chain(root: Path) -> str:
+    """Shell prefix: lunar on PYTHONPATH, source ROS + colcon workspace, ROS_DOMAIN_ID."""
+    package_root = root / "lunar" / "src"
+    parts = [f"export PYTHONPATH={shlex.quote(str(package_root))}:$PYTHONPATH"]
+    ros_setup = _detect_ros_setup_script()
+    workspace_setup = root / "install" / "setup.bash"
+    if ros_setup and ros_setup.exists():
+        parts.append(f"source {ros_setup}")
+    if workspace_setup.exists():
+        parts.append(f"source {workspace_setup}")
+    parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
+    return " && ".join(parts)
+
+
+def _camera_ws_command(root: Path) -> str:
+    """Bash command to run camera_ws.py (JPEG streams + /sensor/ws)."""
+    return f"{_ros_source_env_chain(root)} && {sys.executable} {shlex.quote(str(root / 'lunar' / 'src' / 'lunar' / 'dashboard' / 'camera_ws.py'))}"
+
+
+def _mission_bridge_run_command(root: Path, port: int, host: str) -> str:
+    """Bash command to run mission_bridge.main (MissionControlSnapshot on /mission/ws)."""
+    return (
+        f"{_ros_source_env_chain(root)} && "
+        f"{sys.executable} -c \"from lunar.mission_bridge import main; main(port={int(port)}, host={host!r})\""
+    )
+
+
+def _launch_vite_mission_control(
+    *,
+    port: int,
+    host: str,
+    background: bool,
+    log_name: str,
+    with_robot_stack: bool = False,
+    stack_bridge_port: int = 8770,
+    stack_bridge_host: str = "0.0.0.0",
+) -> None:
     """Run mission-control: Vite dev server when pnpm exists, else static ``dist/`` via stdlib http.server."""
     root = find_repo_root()
     app_dir = root / "lunar" / "mission-control"
@@ -2008,10 +2117,38 @@ def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_
 
     typer.secho(f"Launching mission control — {mode} — http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
 
+    camera_proc = None
+    bridge_proc = None
+    camera_log = root / ".lunar" / "camera_ws.log"
+    bridge_log = root / ".lunar" / "mission_bridge.log"
+
+    if with_robot_stack:
+        cam_path = root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"
+        if not cam_path.is_file():
+            typer.secho(f"Error: camera_ws not found at {cam_path}", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        ensure_env(force=True)
+        typer.secho(
+            "Bundling camera_ws (:8767) + mission_bridge (:8770) for live cameras, sensors, and mission snapshot.",
+            fg=typer.colors.CYAN,
+        )
+        camera_proc = spawn("camera_ws", _camera_ws_command(root), log_file=camera_log)
+        bridge_proc = spawn(
+            "mission_bridge",
+            _mission_bridge_run_command(root, stack_bridge_port, stack_bridge_host),
+            log_file=bridge_log,
+        )
+
     if background:
         proc = spawn(log_name, cmd, log_file=log_path)
-        save_state([proc])
+        procs_to_save = []
+        if with_robot_stack:
+            procs_to_save.extend([camera_proc, bridge_proc])
+        procs_to_save.append(proc)
+        save_state(procs_to_save)
         typer.echo(f"Mission control running in background. Logs: {log_path}")
+        if with_robot_stack:
+            typer.echo(f"Also logging camera_ws to {camera_log} and mission_bridge to {bridge_log}")
         typer.echo("Run 'lunar kill' to stop tracked background processes.")
         return
 
@@ -2021,6 +2158,13 @@ def _launch_vite_mission_control(*, port: int, host: str, background: bool, log_
         typer.secho("\nMission control stopped.", fg=typer.colors.YELLOW)
     except subprocess.CalledProcessError as e:
         typer.secho(f"Mission control failed with exit code {e.returncode}", fg=typer.colors.RED)
+    finally:
+        if with_robot_stack and camera_proc is not None and bridge_proc is not None:
+            for p in (camera_proc, bridge_proc):
+                try:
+                    os.killpg(p.pgid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
 
 @app.command()
@@ -2028,6 +2172,11 @@ def mission_control(
     port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(False, "--background/--foreground", help="Run in the background or foreground."),
+    with_robot_stack: bool = typer.Option(
+        True,
+        "--with-robot-stack/--no-robot-stack",
+        help="Also start camera_ws (:8767) and mission_bridge (:8770) for live feeds (same as lunar dashboard).",
+    ),
 ):
     """
     Launch the React mission-control dashboard.
@@ -2035,7 +2184,13 @@ def mission_control(
     Uses Vite dev server when pnpm is available; otherwise serves ``dist/`` with Python's http.server
     (build ``dist`` elsewhere, e.g. ``make mission-control-build``).
     """
-    _launch_vite_mission_control(port=port, host=host, background=background, log_name="mission_control")
+    _launch_vite_mission_control(
+        port=port,
+        host=host,
+        background=background,
+        log_name="mission_control",
+        with_robot_stack=with_robot_stack,
+    )
 
 
 @app.command()
@@ -2053,22 +2208,10 @@ def mission_bridge(
     """
     root = find_repo_root()
     log_path = root / ".lunar" / "mission_bridge.log"
-    package_root = root / "lunar" / "src"
 
     ensure_env(force=True)
 
-    cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
-    ros_setup = _detect_ros_setup_script()
-    workspace_setup = root / "install" / "setup.bash"
-    if ros_setup and ros_setup.exists():
-        cmd_parts.append(f"source {ros_setup}")
-    if workspace_setup.exists():
-        cmd_parts.append(f"source {workspace_setup}")
-    cmd_parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
-    cmd_parts.append(
-        f"{sys.executable} -c \"from lunar.mission_bridge import main; main(port={int(port)}, host={host!r})\""
-    )
-    cmd = " && ".join(cmd_parts)
+    cmd = _mission_bridge_run_command(root, port, host)
 
     typer.secho(f"Launching mission bridge on ws://{host}:{port}/mission/ws", fg=typer.colors.GREEN, bold=True)
     if background:
@@ -2091,14 +2234,28 @@ def dashboard(
     port: int = typer.Option(8501, help="HTTP port (Vite dev or static dist)."),
     host: str = typer.Option("0.0.0.0", help="Host to bind to."),
     background: bool = typer.Option(True, "--foreground/--background", help="Run in the background (default) or foreground."),
+    with_robot_stack: bool = typer.Option(
+        True,
+        "--with-robot-stack/--no-robot-stack",
+        help="Also start camera_ws (:8767) and mission_bridge (:8770) so cameras and mission data work without extra commands.",
+    ),
 ):
     """
     Launch the React mission-control operator dashboard.
 
+    By default also starts **camera_ws** (JPEG + /sensor/ws) and **mission_bridge** (/mission/ws), like the legacy
+    Streamlit flow, so ``lunar build`` → ``lunar run robot`` → ``lunar dashboard`` is enough on the robot.
+
     Uses Vite when pnpm is installed; otherwise serves ``lunar/mission-control/dist/`` with Python (no pnpm on device).
-    For the legacy Streamlit UI and camera websocket helper, use ``lunar streamlit-dashboard``.
+    For the legacy Streamlit UI, use ``lunar streamlit-dashboard``.
     """
-    _launch_vite_mission_control(port=port, host=host, background=background, log_name="dashboard")
+    _launch_vite_mission_control(
+        port=port,
+        host=host,
+        background=background,
+        log_name="dashboard",
+        with_robot_stack=with_robot_stack,
+    )
 
 
 @app.command("streamlit-dashboard")
@@ -2117,7 +2274,6 @@ def streamlit_dashboard(
     camera_ws_path = root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"
     log_path = root / ".lunar" / "streamlit_dashboard.log"
     camera_log_path = root / ".lunar" / "camera_ws.log"
-    package_root = root / "lunar" / "src"
 
     if not dashboard_path.exists():
         typer.secho(f"Error: Streamlit app not found at {dashboard_path}", fg=typer.colors.RED)
@@ -2130,21 +2286,12 @@ def streamlit_dashboard(
 
     typer.secho(f"Launching legacy Streamlit dashboard on http://{host}:{port}", fg=typer.colors.GREEN, bold=True)
 
-    cmd_parts = [f"export PYTHONPATH={package_root}:$PYTHONPATH"]
-
-    ros_setup = _detect_ros_setup_script()
-    workspace_setup = root / "install" / "setup.bash"
-    if ros_setup and ros_setup.exists():
-        cmd_parts.append(f"source {ros_setup}")
-    if workspace_setup.exists():
-        cmd_parts.append(f"source {workspace_setup}")
-    cmd_parts.append(f"export ROS_DOMAIN_ID={Config.load().domain_id}")
-
-    cmd_parts.append(
-        f"{sys.executable} -m streamlit run {dashboard_path} --server.port {port} --server.address {host} --logger.level info"
+    chain = _ros_source_env_chain(root)
+    cmd = (
+        f"{chain} && {sys.executable} -m streamlit run {shlex.quote(str(dashboard_path))} "
+        f"--server.port {int(port)} --server.address {shlex.quote(host)} --logger.level info"
     )
-    cmd = " && ".join(cmd_parts)
-    camera_cmd = " && ".join(cmd_parts[:-1] + [f"{sys.executable} {camera_ws_path}"])
+    camera_cmd = _camera_ws_command(root)
 
     if background:
         typer.echo("Starting Streamlit dashboard in background...")
@@ -2169,5 +2316,4 @@ def streamlit_dashboard(
 
 
 if __name__ == "__main__":
-    from dataclasses import asdict
     app()

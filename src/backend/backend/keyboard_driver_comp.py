@@ -17,7 +17,7 @@ import pygame
 
 from rclpy.node import Node
 
-from pygame.locals import *
+from pygame.locals import KEYDOWN, KEYUP, QUIT
 
 from std_msgs.msg import Int16, Int8
 

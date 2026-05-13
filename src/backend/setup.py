@@ -42,6 +42,7 @@ setup(
             'rgb_transport = backend.rgb_transport:main',
             'joystick_driver = backend.joystick_driver:main',
             'keyboard_driver_comp = backend.keyboard_driver_comp:main',
+            'dig_sequence = backend.dig_sequence_controller:main',
             'perception_health = backend.perception_health:main',
             'local_terrain_grid = backend.local_terrain_grid:main',
             'flag_detector = backend.flag_detector:main',

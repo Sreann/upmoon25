@@ -57,6 +57,18 @@ _sensor_state = {
     "encoder_right": 0,
     "recent_logs": [],
 }
+
+
+def _recent_logs_snapshot():
+    rl = _sensor_state.get("recent_logs", [])
+    return list(rl) if isinstance(rl, list) else []
+
+
+def _sensor_float(key: str, default: float = 0.0) -> float:
+    v = _sensor_state.get(key, default)
+    return float(v) if isinstance(v, (int, float)) else default
+
+
 _history = {
     "time": deque(maxlen=100),
     "vel": deque(maxlen=100),
@@ -258,7 +270,7 @@ class CameraWsBridge(Node):
             return
         line = f"[{msg.name}] {msg.msg}"
         with _clients_lock:
-            logs = list(_sensor_state.get("recent_logs", []))
+            logs = _recent_logs_snapshot()
             logs.append(line)
             _sensor_state["recent_logs"] = logs[-20:]
         _schedule_sensor_broadcast()
@@ -297,11 +309,11 @@ class CameraWsBridge(Node):
             _sensor_state["network_latency"] = latency
 
             _history["time"].append(now)
-            _history["vel"].append(float(_sensor_state["linear_vel"]))
-            _history["base_vel"].append(float(_sensor_state["baseline_vel"]))
+            _history["vel"].append(_sensor_float("linear_vel"))
+            _history["base_vel"].append(_sensor_float("baseline_vel"))
             _history["cpu"].append(cpu)
             _history["temp"].append(temp)
-            _history["battery"].append(float(_sensor_state["battery_voltage"]))
+            _history["battery"].append(_sensor_float("battery_voltage"))
             _history["latency"].append(latency)
 
             t0 = _history["time"][0] if _history["time"] else now

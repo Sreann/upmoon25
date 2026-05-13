@@ -72,15 +72,13 @@ def _load_realsense_module():
     return None
 
 
-_REALSENSE_CACHE = {
-    "ts": 0.0,
-    "value": {
-        "driver_ok": False,
-        "devices": [],
-        "tracking_connected": False,
-        "front_connected": False,
-        "rear_connected": False,
-    },
+_REALSENSE_TS = 0.0
+_REALSENSE_VALUE = {
+    "driver_ok": False,
+    "devices": [],
+    "tracking_connected": False,
+    "front_connected": False,
+    "rear_connected": False,
 }
 
 
@@ -243,9 +241,12 @@ def _discover_drive_ports():
 
 
 def _detect_realsense_devices():
+    global _REALSENSE_TS
+    global _REALSENSE_VALUE
+
     now = time.monotonic()
-    if now - _REALSENSE_CACHE["ts"] < 3.0:
-        return dict(_REALSENSE_CACHE["value"])
+    if now - _REALSENSE_TS < 3.0:
+        return dict(_REALSENSE_VALUE)
 
     # Keep dashboard rendering safe: RealSense enumeration has hung inside the
     # Streamlit process on the Jetson, so prefer a short-lived subprocess.
@@ -279,8 +280,8 @@ def _detect_realsense_devices():
             except Exception:
                 pass
 
-    _REALSENSE_CACHE["ts"] = now
-    _REALSENSE_CACHE["value"] = dict(result)
+    _REALSENSE_TS = now
+    _REALSENSE_VALUE = dict(result)
     return dict(result)
 
 

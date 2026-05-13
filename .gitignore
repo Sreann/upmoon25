@@ -15,6 +15,9 @@ build
 install
 log
 
+# local CI / lint venv (not part of lunar's uv env)
+.ci-venv/
+
 src/sensor/build
 
 rosbag*
