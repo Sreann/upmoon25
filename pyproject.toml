@@ -21,6 +21,16 @@ line-length = 120
 "src/backend/backend/keyboard_driver_comp.py" = ["F403", "F405"]
 "src/backend/backend/rc_controller.py" = ["F403", "F405"]
 
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.src]
+# ROS packages need a sourced workspace; narrow ty to lunar + tooling-friendly paths.
+exclude = [
+    "src/**",
+    "firmware/**",
+]
+
 # ROS/rclpy stubs are not in the dev venv; unresolved imports are ignored. Other issues downgrade
 # to warnings so `ty check` can run in CI without a sourced ROS workspace while still surfacing noise.
 [tool.ty.rules]

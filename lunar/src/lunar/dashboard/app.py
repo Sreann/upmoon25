@@ -20,9 +20,9 @@ for path in (repo_root, package_root):
     if path_str not in sys.path:
         sys.path.append(path_str)
 
-from lunar.dashboard.state import store
-from lunar.dashboard.components.hardware import render_hardware_panel
-from lunar.dashboard.components.teleop import render_hold_controls
+from lunar.dashboard.state import store  # noqa: E402
+from lunar.dashboard.components.hardware import render_hardware_panel  # noqa: E402
+from lunar.dashboard.components.teleop import render_hold_controls  # noqa: E402
 
 BRIDGE_IMPORT_ERROR = None
 UI_REFRESH_SEC = 0.2
@@ -397,6 +397,11 @@ def _render_command_controls():
     node = get_node() if st.session_state.get('ros_bridge', False) else None
     ros_live = node is not None and st.session_state.get('ros_bridge', False)
 
+    def _publish_if_live(method: str, *args, **kwargs) -> None:
+        if node is None:
+            return
+        getattr(node, method)(*args, **kwargs)
+
     st.subheader("🕹️ Controls")
     if not ros_live:
         st.warning("Live ROS telemetry is disabled. Teleop controls are visible but inactive.")
@@ -444,7 +449,7 @@ def _render_command_controls():
             disabled=not ros_live,
         )
         if ros_live and bool(conveyor_enabled) != bool(store.get_snapshot().conveyor_enabled):
-            node.publish_conveyor(bool(conveyor_enabled))
+            _publish_if_live("publish_conveyor", bool(conveyor_enabled))
         bucket_pos = st.slider(
             "Bucket Pos",
             0,
@@ -453,7 +458,7 @@ def _render_command_controls():
             disabled=not ros_live,
         )
         if ros_live and int(bucket_pos) != int(store.get_snapshot().bucket_pos):
-            node.publish_bucket_pos(int(bucket_pos))
+            _publish_if_live("publish_bucket_pos", int(bucket_pos))
         mining_state = store.get_snapshot()
         st.caption(
             f"Chain {mining_state.active_bucket_cmd or 'stopped'} | "
@@ -470,7 +475,7 @@ def _render_command_controls():
             disabled=not ros_live,
         )
         if ros_live and int(camera_pan) != int(store.get_snapshot().camera_pan):
-            node.publish_pan(int(camera_pan))
+            _publish_if_live("publish_pan", int(camera_pan))
         camera_height = st.slider(
             "Cam Height",
             0,
@@ -479,7 +484,7 @@ def _render_command_controls():
             disabled=not ros_live,
         )
         if ros_live and int(camera_height) != int(store.get_snapshot().camera_height):
-            node.publish_cam_height(int(camera_height))
+            _publish_if_live("publish_cam_height", int(camera_height))
         camera_state = store.get_snapshot()
         st.caption(
             f"Height {int(st.session_state['camera_height'])} | "
@@ -491,13 +496,13 @@ def _render_command_controls():
     tx = cx.number_input("X", value=0.0, disabled=not ros_live)
     ty = cy.number_input("Y", value=0.0, disabled=not ros_live)
     if cgo.button("🚀 GO TO", use_container_width=True, disabled=not ros_live):
-        node.publish_goal(tx, ty)
+        _publish_if_live("publish_goal", tx, ty)
 
     m1, m2 = st.columns(2)
     if m1.button("🏁 Home", use_container_width=True, disabled=not ros_live):
-        node.trigger_macro("home")
+        _publish_if_live("trigger_macro", "home")
     if m2.button("⛏️ Dig", use_container_width=True, disabled=not ros_live):
-        node.trigger_macro("dig")
+        _publish_if_live("trigger_macro", "dig")
 
     if st.button(
         "🔴 EMERGENCY STOP",
@@ -506,7 +511,7 @@ def _render_command_controls():
         disabled=not ros_live,
         key="dashboard_emergency_stop",
     ):
-        node.stop_all_actuators()
+        _publish_if_live("stop_all_actuators")
         st.session_state["conveyor_enabled"] = False
         st.toast("All motion commands stopped.")
         st.rerun()
@@ -669,7 +674,9 @@ with st.sidebar:
         ni_i = st.slider("Ki (Integral)", 0.0, 5.0, float(state.ki), 0.01)
         nd_d = st.slider("Kd (Derivative)", 0.0, 5.0, float(state.kd), 0.01)
         if st.button("Apply Gains", use_container_width=True):
-            if get_node(): get_node().publish_pid(np_p, ni_i, nd_d)
+            bridge = get_node()
+            if bridge:
+                bridge.publish_pid(np_p, ni_i, nd_d)
             st.toast("PID Gains Updated!")
     
     st.divider()
@@ -707,15 +714,21 @@ with tab_data:
         fname = st.text_input("Bag Name", "mission_data")
         if not state.is_recording:
             if st.button("🔴 Start Recording", use_container_width=True):
-                if get_node(): get_node().toggle_recording(fname)
+                bridge = get_node()
+                if bridge:
+                    bridge.toggle_recording(fname)
         else:
             if st.button("⏹️ Stop Recording", type="primary", use_container_width=True):
-                if get_node(): get_node().toggle_recording(fname)
+                bridge = get_node()
+                if bridge:
+                    bridge.toggle_recording(fname)
             st.warning(f"Recording: {state.bag_filename}")
     with c_map:
         mname = st.text_input("Map Name", "lunar_v1")
         if st.button("💾 Save Map", use_container_width=True):
-            if get_node(): get_node().save_map(mname)
+            bridge = get_node()
+            if bridge:
+                bridge.save_map(mname)
             st.success("Map saving triggered.")
 
     st.divider()

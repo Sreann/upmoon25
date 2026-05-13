@@ -23,6 +23,17 @@ uv run lunar run robot
 uv run lunar dashboard
 ```
 
+### `lunar run` profiles
+
+| Profile | Behavior |
+|---------|----------|
+| `robot` | Frontend / driver launch (Jetson-oriented). |
+| `rc` | RViz + joystick (optional `--record`). |
+| `autonomy` | RViz + rgb transport + main controller. |
+| `dig` | Foreground `dig_sequence` node. Requires `--calibrated-rotary <ticks>`; optional `--encoder-side` (`left` or `right`). Run `lunar run robot` first so topics and sensors exist. |
+
+Example: `lunar run dig --calibrated-rotary 800`
+
 Then open `http://<robot-ip>:8501`. **`lunar dashboard`** starts the UI plus **`camera_ws`** (port **8767**, JPEG + `/sensor/ws`) and **`mission_bridge`** (port **8770**, `/mission/ws`), matching what you used to get from Streamlit without extra commands. Stop everything it spawned with **`lunar kill`**.
 
 - UI only, no ROS sidecars: `uv run lunar dashboard --no-robot-stack`
@@ -45,6 +56,7 @@ Then open `http://<robot-ip>:8501`. **`lunar dashboard`** starts the UI plus **`
 - **`lunar act`** — Shortcuts for actuator / drive topics.
 - **`lunar keyboard`** — Terminal teleop (Textual TUI on robot).
 - **`lunar autonomy-stack`** — Shadow perception + terrain + flags + autonomy supervisor (no autonomous drive by default).
+- **`lunar run`** — Background bundles **`robot`** / **`rc`** / **`autonomy`**, or foreground **`dig`** (needs **`--calibrated-rotary`**); see table above.
 - **`lunar kill`** — Stop tracked background processes.
 
 ## Quality (from **repo root**)

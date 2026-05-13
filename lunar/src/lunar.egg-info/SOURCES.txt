@@ -3,6 +3,7 @@ pyproject.toml
 src/lunar/__init__.py
 src/lunar/cli.py
 src/lunar/config.py
+src/lunar/keyboard_topics.py
 src/lunar/keyboard_tui.py
 src/lunar/mission_bridge.py
 src/lunar/process.py

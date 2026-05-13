@@ -14,7 +14,7 @@ import tty
 from pathlib import Path
 from dataclasses import asdict
 from enum import Enum
-from typing import Optional
+from typing import Optional, TextIO, cast
 
 import typer
 import serial.tools.list_ports
@@ -34,6 +34,7 @@ class RunProfile(str, Enum):
     ROBOT = "robot"
     RC = "rc"
     AUTONOMY = "autonomy"
+    DIG = "dig"
 
 
 class ControlTarget(str, Enum):
@@ -291,6 +292,7 @@ def _force_cleanup_runtime_processes() -> list[str]:
         "[t]265_driver",
         "[c]onveyor",
         "[m]ining_controller",
+        "[r]os2 run backend dig_sequence",
         "[t]ag_detector",
         "[f]oxglove_bridge",
         "[s]treamlit run .*lunar/src/lunar/dashboard/app.py",
@@ -587,28 +589,28 @@ def _run_terminal_subsystem_keyboard(
     def set_camera_height(value: int):
         nonlocal camera_height
         camera_height = max(0, min(100, int(value)))
-        if direct_ready and arduino.write(ARDUINO_CAM_HEIGHT_PIN, camera_height):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_CAM_HEIGHT_PIN, camera_height):
             return
         publish(pub_cam_height, camera_height)
 
     def set_pan(value: int):
         nonlocal pan
         pan = max(10, min(170, int(value)))
-        if direct_ready and arduino.write(ARDUINO_PAN_PIN, pan):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_PAN_PIN, pan):
             return
         publish(pub_pan, pan)
 
     def set_bucket_pos(value: int):
         nonlocal bucket_pos
         bucket_pos = max(0, min(100, int(value)))
-        if direct_ready and arduino.write(ARDUINO_BUCKET_PIN, bucket_pos):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_BUCKET_PIN, bucket_pos):
             return
         publish(pub_bucket_pos, bucket_pos)
 
     def set_conveyor(value: int):
         nonlocal conveyor
         conveyor = 1 if int(value) else 0
-        if direct_ready and arduino.write(ARDUINO_CONVEYOR_PIN, conveyor):
+        if direct_ready and arduino is not None and arduino.write(ARDUINO_CONVEYOR_PIN, conveyor):
             return
         publish(pub_conveyor, conveyor)
 
@@ -871,7 +873,7 @@ def sim(
         while True:
             events = sel.select(timeout=1.0)
             for key, mask in events:
-                line = key.fileobj.readline()
+                line = cast(TextIO, key.fileobj).readline()
                 if line:
                     typer.secho(f"[{key.data}] {line.strip()}", dim=True)
     except KeyboardInterrupt:
@@ -881,15 +883,34 @@ def sim(
 
 @app.command()
 def run(
-    profile: RunProfile = typer.Argument(..., help="The execution profile to use:\n\n- robot: Launch frontend drivers for physical robot operation.\n- rc: Launch joystick and recording tools for remote control.\n- autonomy: Launch the high-level autonomy stack (mapping, planning)."),
+    profile: RunProfile = typer.Argument(
+        ...,
+        help=(
+            "The execution profile:\n\n"
+            "- robot: Frontend drivers on the Jetson/comp stack.\n"
+            "- rc: Joystick / RViz (and optional rosbag).\n"
+            "- autonomy: Planner / transport / command stack.\n"
+            "- dig: Foreground autonomous dig cycle (needs robot drivers already running)."
+        ),
+    ),
     record: bool = typer.Option(False, "--record", help="Start a rosbag recording of odom and camera data (RC profile only)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be run for this profile."),
+    calibrated_rotary: Optional[int] = typer.Option(
+        None,
+        "--calibrated-rotary",
+        help="dig profile only: Wheel encoder ticks to reach on each forward phase (positive target).",
+    ),
+    encoder_side: str = typer.Option(
+        "left",
+        "--encoder-side",
+        help="dig profile only: Subscribe to /sensor/encoder/left or right.",
+    ),
 ):
     """
-    Execute high-level system profiles for Robot, RC, or Autonomy.
+    Execute high-level system profiles for Robot, RC, Autonomy, or Dig.
 
-    Profiles are pre-configured sets of ROS 2 nodes tailored for specific tasks.
-    They run in the background, and their state is tracked for 'lunar kill'.
+    robot/rc/autonomy run ROS nodes in the background (see 'lunar kill').
+    dig runs the calibrated dig_sequence node in the foreground until it finishes or you Ctrl-C.
     """
     root = find_repo_root()
     log_path = root / ".lunar" / f"run_{profile.value}.log"
@@ -908,6 +929,42 @@ def run(
         cmds.append(("rviz", "rviz2"))
         cmds.append(("transport", "ros2 run backend rgb_transport"))
         cmds.append(("controller", "ros2 run backend main_controller"))
+
+    elif profile == RunProfile.DIG:
+        if calibrated_rotary is None or calibrated_rotary <= 0:
+            typer.secho(
+                "Profile 'dig' requires --calibrated-rotary <positive_ticks> "
+                "(forward phase stops near this encoder reading).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        side = encoder_side.strip().lower()
+        if side not in ("left", "right"):
+            typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+        ensure_env()
+        dig_cmd = [
+            "ros2",
+            "run",
+            "backend",
+            "dig_sequence",
+            "--ros-args",
+            "-p",
+            f"calibrated_rotary:={calibrated_rotary}",
+            "-p",
+            f"encoder_side:={side}",
+        ]
+        if dry_run:
+            typer.echo(" ".join(shlex.quote(x) for x in dig_cmd))
+            return
+
+        typer.secho(
+            "Starting dig sequence in the foreground... (Ctrl-C to abort; ensure lunar run robot already.)",
+            fg=typer.colors.YELLOW,
+        )
+        subprocess.run(dig_cmd, check=False)
+        return
 
     if dry_run:
         for name, cmd in cmds:
@@ -1236,6 +1293,7 @@ def build(
     subprocess.run(["pkill", "-f", "depth_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "t265_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "mining_controller"], stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-f", "dig_sequence"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "tag_detector"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "conveyor"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-9", "gzserver"], stderr=subprocess.DEVNULL)
@@ -1420,7 +1478,7 @@ def check(
     def run_cmd(cmd, timeout=2.0):
         try:
             return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
-        except (subprocess.TimeoutExpired, OSError):
+        except (OSError, subprocess.TimeoutExpired, ValueError):
             return ""
 
     # --- Hardware Checks ---
@@ -1645,9 +1703,9 @@ def check(
         with open(log_path, "r") as f:
             lines = f.readlines()
             results["recent_errors"] = [
-                line.strip()
-                for line in lines
-                if "ERROR" in line.upper() or "process has died" in line.upper()
+                ln.strip()
+                for ln in lines
+                if "ERROR" in ln.upper() or "process has died" in ln.upper()
             ][-8:]
 
     if json_out:
@@ -1748,9 +1806,9 @@ def check(
 
     typer.echo("\n[Recent Errors/Warnings]")
     if results["recent_errors"]:
-        for err_line in results["recent_errors"]:
-            color = typer.colors.RED if "ERROR" in err_line.upper() or "died" in err_line.upper() else typer.colors.YELLOW
-            typer.secho(f"  {err_line}", fg=color)
+        for err_ln in results["recent_errors"]:
+            color = typer.colors.RED if "ERROR" in err_ln.upper() or "died" in err_ln.upper() else typer.colors.YELLOW
+            typer.secho(f"  {err_ln}", fg=color)
     else:
         typer.secho("  No critical errors found in log.", fg=typer.colors.GREEN)
 
@@ -1760,7 +1818,10 @@ def check(
         try:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             while True:
-                line = proc.stdout.readline()
+                out = proc.stdout
+                if out is None:
+                    break
+                line = out.readline()
                 if not line:
                     break
                 if any(x in line for x in ["level: 30", "level: 40", "level: 50"]):
@@ -2243,5 +2304,4 @@ def streamlit_dashboard(
 
 
 if __name__ == "__main__":
-    from dataclasses import asdict
     app()
