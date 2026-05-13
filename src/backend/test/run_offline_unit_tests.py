@@ -7,9 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BACKEND_SRC = ROOT / "src" / "backend"
+FRONTEND_SRC = ROOT / "src" / "frontend"
 LUNAR_SRC = ROOT / "lunar" / "src"
 
-for path in [BACKEND_SRC, LUNAR_SRC]:
+for path in [BACKEND_SRC, FRONTEND_SRC, LUNAR_SRC]:
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -21,6 +22,7 @@ TEST_FILES = [
     ROOT / "src" / "backend" / "test" / "test_mission_bridge_contract.py",
     ROOT / "src" / "backend" / "test" / "test_autonomy_shadow_logic.py",
     ROOT / "src" / "backend" / "test" / "test_autonomy_topic_contracts.py",
+    ROOT / "src" / "backend" / "test" / "test_encoder_drive_sequence.py",
 ]
 
 

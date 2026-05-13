@@ -64,7 +64,7 @@ help:
 	@echo "  make test-firmware - Native encoder quadrature unit tests (g++; no ROS)"
 	@echo "  make test-offline - Run hardware-free backend/bridge unit tests only"
 	@echo "  make ci         - lint + mission-control production build + offline tests (no Jetson)"
-	@echo "  make run profile=[robot|rc|autonomy] - Run specialized profile"
+	@echo "  make run profile=[robot|rc|autonomy|test-encoder] - Run specialized profile"
 	@echo "  make kill     - Stop all simulation and ROS processes"
 	@echo "  make logs     - View logs"
 	@echo "  make check    - Unified health audit"

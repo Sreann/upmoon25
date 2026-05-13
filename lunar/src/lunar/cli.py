@@ -34,6 +34,7 @@ class RunProfile(str, Enum):
     ROBOT = "robot"
     RC = "rc"
     AUTONOMY = "autonomy"
+    TEST_ENCODER = "test-encoder"
 
 
 class ControlTarget(str, Enum):
@@ -881,12 +882,21 @@ def sim(
 
 @app.command()
 def run(
-    profile: RunProfile = typer.Argument(..., help="The execution profile to use:\n\n- robot: Launch frontend drivers for physical robot operation.\n- rc: Launch joystick and recording tools for remote control.\n- autonomy: Launch the high-level autonomy stack (mapping, planning)."),
+    profile: RunProfile = typer.Argument(
+        ...,
+        help=(
+            "The execution profile to use:\n\n"
+            "- robot: Launch frontend drivers for physical robot operation.\n"
+            "- rc: Launch joystick and recording tools for remote control.\n"
+            "- autonomy: Launch the high-level autonomy stack (mapping, planning).\n"
+            "- test-encoder: Launch drive + Arduino, run 5s forward / 5s backward, then exit."
+        ),
+    ),
     record: bool = typer.Option(False, "--record", help="Start a rosbag recording of odom and camera data (RC profile only)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be run for this profile."),
 ):
     """
-    Execute high-level system profiles for Robot, RC, or Autonomy.
+    Execute high-level system profiles for Robot, RC, Autonomy, or encoder testing.
 
     Profiles are pre-configured sets of ROS 2 nodes tailored for specific tasks.
     They run in the background, and their state is tracked for 'lunar kill'.
@@ -908,6 +918,9 @@ def run(
         cmds.append(("rviz", "rviz2"))
         cmds.append(("transport", "ros2 run backend rgb_transport"))
         cmds.append(("controller", "ros2 run backend main_controller"))
+
+    elif profile == RunProfile.TEST_ENCODER:
+        cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
 
     if dry_run:
         for name, cmd in cmds:
