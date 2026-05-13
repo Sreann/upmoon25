@@ -34,6 +34,7 @@ class RunProfile(str, Enum):
     ROBOT = "robot"
     RC = "rc"
     AUTONOMY = "autonomy"
+    TEST_ENCODER = "test-encoder"
     DIG = "dig"
 
 
@@ -895,7 +896,8 @@ def run(
             "- robot: Frontend drivers on the Jetson/comp stack.\n"
             "- rc: Joystick / RViz (and optional rosbag).\n"
             "- autonomy: Planner / transport / command stack.\n"
-            "- dig: Foreground autonomous dig cycle (needs robot drivers already running)."
+            "- test-encoder: Drive + Arduino, 5s forward / 5s backward encoder test, then exit.\n"
+            "- dig: Foreground autonomous dig cycle (needs robot drivers; use --calibrated-rotary)."
         ),
     ),
     record: bool = typer.Option(False, "--record", help="Start a rosbag recording of odom and camera data (RC profile only)."),
@@ -912,9 +914,9 @@ def run(
     ),
 ):
     """
-    Execute high-level system profiles for Robot, RC, Autonomy, or Dig.
+    Execute high-level system profiles for Robot, RC, Autonomy, test-encoder, or Dig.
 
-    robot/rc/autonomy run ROS nodes in the background (see 'lunar kill').
+    robot/rc/autonomy/test-encoder run ROS nodes in the background (see 'lunar kill').
     dig runs the calibrated dig_sequence node in the foreground until it finishes or you Ctrl-C.
     """
     root = find_repo_root()
@@ -934,6 +936,9 @@ def run(
         cmds.append(("rviz", "rviz2"))
         cmds.append(("transport", "ros2 run backend rgb_transport"))
         cmds.append(("controller", "ros2 run backend main_controller"))
+
+    elif profile == RunProfile.TEST_ENCODER:
+        cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
 
     elif profile == RunProfile.DIG:
         if calibrated_rotary is None or calibrated_rotary <= 0:

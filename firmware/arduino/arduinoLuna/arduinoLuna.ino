@@ -36,6 +36,16 @@
 #define IR_SENSOR_LEFT A1
 #define DEBUG_SERIAL 0
 
+/*
+ * Encoder quadrature ticks: often ~4 valid edges per mechanical detent. Publishing raw ticks can
+ * look uneven (+4/+5 per click, jitter). Set ENCODER_PUBLISH_DIVISOR to 4 for Serial values that
+ * track roughly one step per detent; truncation is symmetric so forward/reverse magnitudes match.
+ * ROS / arduino_driver receive whatever we print — keep divisor 1 if downstream expects raw ticks.
+ */
+#ifndef ENCODER_PUBLISH_DIVISOR
+#define ENCODER_PUBLISH_DIVISOR 1
+#endif
+
 #include "encoder_quadrature.h"
 
 char input[INPUT_SIZE];
@@ -84,6 +94,18 @@ static void updateEncoderReading(int8_t *last_encoded, long *count, int8_t encod
   if (delta != 0) {
     *count += delta;
   }
+}
+
+/** Maps internal tick count to what we publish (symmetric toward zero for negative counts). */
+static inline long encoder_publish_value(long raw_ticks) {
+#if ENCODER_PUBLISH_DIVISOR <= 1
+  return raw_ticks;
+#else
+  if (raw_ticks >= 0) {
+    return raw_ticks / (long)ENCODER_PUBLISH_DIVISOR;
+  }
+  return -((-raw_ticks) / (long)ENCODER_PUBLISH_DIVISOR);
+#endif
 }
 
 float irRawToDistanceCm(int raw_value) {
@@ -249,9 +271,9 @@ void loop() {
   Serial.print(":");
   Serial.print(ir_left_cm);
   Serial.print(":");
-  Serial.print(encoder_left_count);
+  Serial.print(encoder_publish_value(encoder_left_count));
   Serial.print(":");
-  Serial.println(encoder_right_count);
+  Serial.println(encoder_publish_value(encoder_right_count));
 
   delay(10);
 }
