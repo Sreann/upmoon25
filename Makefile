@@ -64,7 +64,7 @@ help:
 	@echo "  make test-firmware - Native encoder quadrature unit tests (g++; no ROS)"
 	@echo "  make test-offline - Run hardware-free backend/bridge unit tests only"
 	@echo "  make ci         - lint + mission-control production build + offline tests (no Jetson)"
-	@echo "  make run profile=[robot|rc|autonomy] - Run specialized profile"
+	@echo "  make run profile=[robot|rc|autonomy|dig] rotary=<ticks> - Lunar profiles inside container (dig requires rotary)"
 	@echo "  make kill     - Stop all simulation and ROS processes"
 	@echo "  make logs     - View logs"
 	@echo "  make check    - Unified health audit"
@@ -140,8 +140,18 @@ tune-flags:
 	@mkdir -p "$(ROOT)/$(output)"
 	cd "$(ROOT)" && PYTHONPATH="$(ROOT)/src/backend" uv run --project lunar python "$(ROOT)/src/backend/scripts/tune_flags_on_images.py" --input "$(ROOT)/$(input)" --output "$(ROOT)/$(output)"
 
+# profile: robot | rc | autonomy | dig — rotary required when profile=dig
+rotary ?=
+
 run:
+ifneq ($(strip $(profile)),dig)
 	docker exec -it upmoon25_ros lunar run $(profile)
+else
+ifeq ($(strip $(rotary)),)
+	$(error make run profile=dig requires rotary=<positive_ticks>)
+endif
+	docker exec -it upmoon25_ros lunar run dig --calibrated-rotary $(rotary)
+endif
 
 kill:
 	docker exec -it upmoon25_ros lunar kill
