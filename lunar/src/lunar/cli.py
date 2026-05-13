@@ -575,7 +575,8 @@ def _run_terminal_subsystem_keyboard(
     bucket_pos = 0
     conveyor = 0
     bucket_vel = 0
-    bucket_pos_step = 1
+    bucket_pos_coarse_step = step
+    bucket_pos_fine_step = 1
     last_status = 0.0
     last_bucket_ts = 0.0
     hold_timeout = 0.25
@@ -659,7 +660,7 @@ def _run_terminal_subsystem_keyboard(
     if "pan" in subsystems:
         typer.echo("pan: h/l left/right, m center")
     if "bucket-pos" in subsystems:
-        typer.echo("bucket position: i/k up/down")
+        typer.echo("bucket position: i/k coarse (±step) | I/K fine (±1)")
     if "bucket-vel" in subsystems:
         typer.echo("bucket chain: r/f forward/reverse while key repeats")
     if "conveyor" in subsystems:
@@ -697,9 +698,13 @@ def _run_terminal_subsystem_keyboard(
                     elif "pan" in subsystems and key == "m":
                         set_pan(90)
                     elif "bucket-pos" in subsystems and key == "i":
-                        set_bucket_pos(bucket_pos + bucket_pos_step)
+                        set_bucket_pos(bucket_pos + bucket_pos_coarse_step)
                     elif "bucket-pos" in subsystems and key == "k":
-                        set_bucket_pos(bucket_pos - bucket_pos_step)
+                        set_bucket_pos(bucket_pos - bucket_pos_coarse_step)
+                    elif "bucket-pos" in subsystems and key == "I":
+                        set_bucket_pos(bucket_pos + bucket_pos_fine_step)
+                    elif "bucket-pos" in subsystems and key == "K":
+                        set_bucket_pos(bucket_pos - bucket_pos_fine_step)
                     elif "bucket-vel" in subsystems and key == "r":
                         set_bucket_vel(40)
                     elif "bucket-vel" in subsystems and key == "f":
@@ -1000,7 +1005,7 @@ def keyboard(
         "--subsystems",
         help="Comma-separated subsystems to enable: drive,camera-height,pan,bucket-pos,bucket-vel,conveyor,all. Defaults to all.",
     ),
-    step: int = typer.Option(5, "--step", min=1, max=25, help="Increment for position-style controls."),
+    step: int = typer.Option(5, "--step", min=1, max=25, help="Increment for camera height, pan, and coarse bucket position (i/k). Fine bucket moves use ±1 (Shift+I / Shift+K in TUI, I/K in --raw)."),
     ros_only: bool = typer.Option(True, "--ros-only/--direct-serial", help="Publish ROS topics only by default; use --direct-serial only for standalone camera-height or pan tests."),
     raw: bool = typer.Option(False, "--raw", help="Use the legacy raw terminal loop instead of the Textual TUI."),
     drive_speed: float = typer.Option(35.0, "--drive-speed", help="Drive command magnitude for W/S in robot units."),
@@ -1020,6 +1025,8 @@ def keyboard(
     Keymap:
     - U/J : camera height up/down
     - 0/1 : camera height min/max
+    - I/K : bucket position up/down (coarse; same step as --step)
+    - Shift+I / Shift+K : bucket position ±1 (fine)
     - Space : stop transient actuators
     - Q : quit
 

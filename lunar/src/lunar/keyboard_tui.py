@@ -353,7 +353,8 @@ def run_keyboard_tui(
             self.actuator = actuator
             self.start_ts = time.monotonic()
             self.height_step = _clamp(step, 1, 25)
-            self.bucket_pos_step = 1
+            self.bucket_pos_coarse_step = self.height_step
+            self.bucket_pos_fine_step = 1
             self.last_drive_ts = 0.0
             self.last_bucket_ts = 0.0
             self.drive_timeout = max(0.12, float(drive_timeout))
@@ -387,7 +388,10 @@ def run_keyboard_tui(
                 yield Static("COMMANDS", classes="section")
                 yield Static("DRIVE: W fwd | S rev | A left | D right | SPACE stop | Q quit", classes="line")
                 yield Static("SERVOS: U/J cam height | 0/1 min/max | H/L pan angle | M center", classes="line")
-                yield Static("MINING: I/K bucket pos | R/F chain | C conveyor", classes="line")
+                yield Static(
+                    "MINING: I/K bucket pos (coarse, same step as U/J) | Shift+I/Shift+K ±1 | R/F chain | C conveyor",
+                    classes="line",
+                )
                 yield Static("ADJUST: [ ] W/S speed | , . A/D turn | - / R/F chain", classes="line")
                 yield Static("VALUES", classes="section")
                 yield Static("", id="drive_value", classes="line")
@@ -461,8 +465,10 @@ def run_keyboard_tui(
                 f"servos     cam_height={self.camera_height:>3}%  pan={self.pan:>3}  step={self.height_step}"
             )
             self.query_one("#mining_value", Static).update(
-                f"mining     bucket_pos={self.bucket_pos:>3}%  chain={self.bucket_vel:>4}  "
-                f"active_chain={self.active_bucket_key or '-'}  conveyor={'ON ' if self.conveyor else 'OFF'}"
+                f"mining     bucket_pos={self.bucket_pos:>3}%  "
+                f"bkt±{self.bucket_pos_coarse_step}/±{self.bucket_pos_fine_step}  "
+                f"chain={self.bucket_vel:>4}  active_chain={self.active_bucket_key or '-'}  "
+                f"conveyor={'ON ' if self.conveyor else 'OFF'}"
             )
             telemetry = self.actuator.telemetry
             self.query_one("#sensor_value", Static).update(
@@ -723,6 +729,10 @@ def run_keyboard_tui(
                 "m": self.action_pan_center,
                 "i": self.action_bucket_up,
                 "k": self.action_bucket_down,
+                "I": self.action_bucket_up_fine,
+                "K": self.action_bucket_down_fine,
+                "shift+i": self.action_bucket_up_fine,
+                "shift+k": self.action_bucket_down_fine,
                 "r": self.action_bucket_chain_forward,
                 "f": self.action_bucket_chain_reverse,
                 "c": self.action_conveyor_toggle,
@@ -786,10 +796,16 @@ def run_keyboard_tui(
             self._set_pan(90)
 
         def action_bucket_up(self) -> None:
-            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_step)
+            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_coarse_step)
 
         def action_bucket_down(self) -> None:
-            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_step)
+            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_coarse_step)
+
+        def action_bucket_up_fine(self) -> None:
+            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_fine_step)
+
+        def action_bucket_down_fine(self) -> None:
+            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_fine_step)
 
         def action_bucket_chain_forward(self) -> None:
             self._set_bucket_vel_latch(self.bucket_speed, "r")
