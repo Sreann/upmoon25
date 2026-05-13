@@ -5,6 +5,18 @@
 // Input is of the form:
 // int:int
 // ex. 1:50 == function ServoPos Position 50
+//
+// Wheel encoders — electrical / logical interface (quadrature rotary):
+//   Each encoder exposes two digital lines, A and B, in quadrature (Gray-coded 2-bit state).
+//   Pins use INPUT_PULLUP (idle HIGH); the encoder switches lines LOW per edge/detent.
+//
+//   ATmega328P (Arduino Uno-class) pin assignment:
+//     Right: A -> D4 (PD4), B -> D5 (PD5) — sampled atomically via PIND.
+//     Left:  A -> D11 (PB3), B -> D12 (PB4) — sampled atomically via PINB.
+//
+//   Firmware inputs:  two digital phases per encoder.
+//   Firmware outputs: '#' serial telemetry: IR cm, encoder ticks, then pin phases (0–3),
+//     decoder phases (0–3), cumulative illegal quadrature transitions per side.
 
 // input:
 //   Bucket linear actuator
@@ -60,6 +72,8 @@ long encoder_right_count;
 long encoder_left_count;
 int8_t last_encoded_right;
 int8_t last_encoded_left;
+uint32_t encoder_right_invalid;
+uint32_t encoder_left_invalid;
 
 /*
  * Two back-to-back digitalRead() calls can sample channel A and B at different times. At a
@@ -89,10 +103,15 @@ static int8_t readEncoderStatePair(uint8_t pin_a, uint8_t pin_b) {
 }
 #endif
 
-static void updateEncoderReading(int8_t *last_encoded, long *count, int8_t encoded) {
+static void updateEncoderReading(int8_t *last_encoded, long *count, int8_t encoded,
+                                 uint32_t *invalid_quadrature_count) {
+  int8_t prev = *last_encoded & 3;
+  encoded &= 3;
   int8_t delta = encoder_quadrature_step(last_encoded, encoded);
   if (delta != 0) {
     *count += delta;
+  } else if (encoded != prev) {
+    (*invalid_quadrature_count)++;
   }
 }
 
@@ -212,6 +231,8 @@ void setup() {
   bucket_height = 0;
   encoder_right_count = 0;
   encoder_left_count = 0;
+  encoder_right_invalid = 0;
+  encoder_left_invalid = 0;
 
   // Set linear actuator pins
   pinMode(BUCKET_PIN, OUTPUT);
@@ -254,12 +275,22 @@ void loop() {
   lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
   lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
 
+  int8_t pin_phase_right;
+  int8_t pin_phase_left;
 #if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
-  updateEncoderReading(&last_encoded_right, &encoder_right_count, readEncoderStateRight());
-  updateEncoderReading(&last_encoded_left, &encoder_left_count, readEncoderStateLeft());
+  pin_phase_right = readEncoderStateRight() & 3;
+  pin_phase_left = readEncoderStateLeft() & 3;
+  updateEncoderReading(&last_encoded_right, &encoder_right_count, pin_phase_right,
+                       &encoder_right_invalid);
+  updateEncoderReading(&last_encoded_left, &encoder_left_count, pin_phase_left,
+                       &encoder_left_invalid);
 #else
-  updateEncoderReading(&last_encoded_right, &encoder_right_count, readEncoderStatePair(ENCODE_R_A, ENCODE_R_B));
-  updateEncoderReading(&last_encoded_left, &encoder_left_count, readEncoderStatePair(ENCODE_L_A, ENCODE_L_B));
+  pin_phase_right = readEncoderStatePair(ENCODE_R_A, ENCODE_R_B) & 3;
+  pin_phase_left = readEncoderStatePair(ENCODE_L_A, ENCODE_L_B) & 3;
+  updateEncoderReading(&last_encoded_right, &encoder_right_count, pin_phase_right,
+                       &encoder_right_invalid);
+  updateEncoderReading(&last_encoded_left, &encoder_left_count, pin_phase_left,
+                       &encoder_left_invalid);
 #endif
 
   int ir_right_raw = analogRead(IR_SENSOR_RIGHT);
@@ -273,7 +304,19 @@ void loop() {
   Serial.print(":");
   Serial.print(encoder_publish_value(encoder_left_count));
   Serial.print(":");
-  Serial.println(encoder_publish_value(encoder_right_count));
+  Serial.print(encoder_publish_value(encoder_right_count));
+  Serial.print(":");
+  Serial.print((int)pin_phase_right);
+  Serial.print(":");
+  Serial.print((int)pin_phase_left);
+  Serial.print(":");
+  Serial.print((int)(last_encoded_right & 3));
+  Serial.print(":");
+  Serial.print((int)(last_encoded_left & 3));
+  Serial.print(":");
+  Serial.print(encoder_right_invalid);
+  Serial.print(":");
+  Serial.println(encoder_left_invalid);
 
   delay(10);
 }

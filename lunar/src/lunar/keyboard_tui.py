@@ -52,6 +52,12 @@ class RobotActuators:
             "ir_right": 0,
             "enc_left": 0,
             "enc_right": 0,
+            "enc_pin_right": 0,
+            "enc_pin_left": 0,
+            "enc_dec_right": 0,
+            "enc_dec_left": 0,
+            "enc_bad_right": 0,
+            "enc_bad_left": 0,
         }
         self.control_path = "unknown"
 
@@ -65,7 +71,7 @@ class RobotActuators:
             import rclpy
             from rclpy.node import Node
             from geometry_msgs.msg import Twist
-            from std_msgs.msg import Int16, Int32
+            from std_msgs.msg import Int16, Int32, Int32MultiArray
         except Exception as exc:
             self.mode = "offline"
             self.status = f"ROS unavailable: {exc}"
@@ -91,6 +97,9 @@ class RobotActuators:
         self.node.create_subscription(Int16, ks["ir_left"], self._on_ir_left, 10)
         self.node.create_subscription(Int32, ks["encoder_left"], self._on_enc_left, 10)
         self.node.create_subscription(Int32, ks["encoder_right"], self._on_enc_right, 10)
+        self.node.create_subscription(
+            Int32MultiArray, ks["encoder_telemetry"], self._on_encoder_telemetry, 10
+        )
         self.mode = "ros-topic"
         self.control_path = "ROS topics -> robot stack"
         self.status = "publishing robot command topics"
@@ -143,6 +152,17 @@ class RobotActuators:
 
     def _on_enc_right(self, msg) -> None:
         self.telemetry["enc_right"] = int(msg.data)
+
+    def _on_encoder_telemetry(self, msg) -> None:
+        data = [int(v) for v in msg.data]
+        if len(data) < 6:
+            return
+        self.telemetry["enc_pin_right"] = data[0]
+        self.telemetry["enc_pin_left"] = data[1]
+        self.telemetry["enc_dec_right"] = data[2]
+        self.telemetry["enc_dec_left"] = data[3]
+        self.telemetry["enc_bad_right"] = data[4]
+        self.telemetry["enc_bad_left"] = data[5]
 
     def _publish_int(self, name: str, value: int) -> bool:
         if self.node is None or name not in self.publishers:
@@ -401,6 +421,7 @@ def run_keyboard_tui(
                 yield Static("", id="servo_value", classes="line")
                 yield Static("", id="mining_value", classes="line")
                 yield Static("", id="sensor_value", classes="line")
+                yield Static("", id="encoder_debug_value", classes="line")
                 yield Static("", id="timing_value", classes="line")
                 yield ProgressBar(total=100, show_eta=False, id="height_bar")
                 yield Static("LAST", classes="section")
@@ -474,6 +495,12 @@ def run_keyboard_tui(
             self.query_one("#sensor_value", Static).update(
                 f"sensors    ir_left={telemetry['ir_left']:>4}  ir_right={telemetry['ir_right']:>4}  "
                 f"enc_left={telemetry['enc_left']:>7}  enc_right={telemetry['enc_right']:>7}"
+            )
+            self.query_one("#encoder_debug_value", Static).update(
+                "enc_dbg    "
+                f"pin(R/L)=({telemetry['enc_pin_right']},{telemetry['enc_pin_left']})  "
+                f"dec(R/L)=({telemetry['enc_dec_right']},{telemetry['enc_dec_left']})  "
+                f"bad(R/L)=({telemetry['enc_bad_right']},{telemetry['enc_bad_left']})"
             )
             key_age = time.monotonic() - self.last_key_ts if self.last_key_ts else 0.0
             self.query_one("#timing_value", Static).update(

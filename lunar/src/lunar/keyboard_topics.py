@@ -34,4 +34,5 @@ KEYBOARD_SENSOR_TOPICS: dict[str, str] = {
     "ir_left": "/sensor/ir/left",
     "encoder_left": "/sensor/encoder/left",
     "encoder_right": "/sensor/encoder/right",
+    "encoder_telemetry": "/sensor/encoder/telemetry",
 }
