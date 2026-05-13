@@ -36,8 +36,9 @@ from sensor_msgs.msg import JointState
 
 DEBUG = False
 FLASH_ON_START = os.environ.get("LUNAR_FLASH_ARDUINO_ON_START", "0") == "1"
-PAN_MAX = 170
-PAN_MIN = 10
+# Absolute pan command range (degrees); match lunar.keyboard_topics.PAN_ANGLE_*.
+PAN_MAX = 180
+PAN_MIN = 0
 ARDUINO_PAN_PIN = 3
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_BUCKET_PIN = 10
