@@ -7,7 +7,7 @@ if str(LUNAR_SRC) not in sys.path:
     sys.path.insert(0, str(LUNAR_SRC))
 
 from lunar.cli import ControlTarget, _parse_subsystems, resolve_control_topic
-from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
+from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
 from lunar.keyboard_tui import ARDUINO_CAM_HEIGHT_PIN, ARDUINO_PAN_PIN, RobotActuators, _clamp, _clamp_float
 
 
@@ -68,7 +68,8 @@ def test_direct_serial_pan_clamps_to_safe_range_and_writes_arduino_pin():
 
     assert actuator.set_pan(-20) is True
 
-    assert actuator.serial.writes == [f"{ARDUINO_PAN_PIN}:10\n".encode("utf-8")]
+    expected = clamp_pan_angle(-20)
+    assert actuator.serial.writes == [f"{ARDUINO_PAN_PIN}:{expected}\n".encode("utf-8")]
     assert actuator.serial.flushed == 1
 
 

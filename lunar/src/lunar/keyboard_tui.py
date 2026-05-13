@@ -6,7 +6,7 @@ from typing import Optional
 
 import serial.tools.list_ports
 
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
 
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_PAN_PIN = 3
@@ -193,7 +193,7 @@ class RobotActuators:
         return self._publish_int("camera-height", value)
 
     def set_pan(self, value: int) -> bool:
-        value = _clamp(value, 10, 170)
+        value = clamp_pan_angle(value)
         if self.serial is not None:
             try:
                 self.serial.write(f"{ARDUINO_PAN_PIN}:{value}\n".encode("utf-8"))
@@ -530,7 +530,7 @@ def run_keyboard_tui(
                 self.last_result = "pan disabled"
                 self._refresh_view()
                 return
-            self.pan = _clamp(value, 10, 170)
+            self.pan = clamp_pan_angle(value)
             self.last_pan_ts = time.monotonic()
             self.position_refresh_until = max(self.position_refresh_until, self.last_pan_ts + 0.75)
             self._set_result(self.actuator.set_pan(self.pan))

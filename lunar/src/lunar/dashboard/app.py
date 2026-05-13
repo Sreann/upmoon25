@@ -20,6 +20,7 @@ for path in (repo_root, package_root):
     if path_str not in sys.path:
         sys.path.append(path_str)
 
+from lunar.keyboard_topics import PAN_ANGLE_MAX, PAN_ANGLE_MIN  # noqa: E402
 from lunar.dashboard.state import store  # noqa: E402
 from lunar.dashboard.components.hardware import render_hardware_panel  # noqa: E402
 from lunar.dashboard.components.teleop import render_hold_controls  # noqa: E402
@@ -469,8 +470,8 @@ def _render_command_controls():
         st.markdown('<div class="compact-card"><h4>Camera</h4></div>', unsafe_allow_html=True)
         camera_pan = st.slider(
             "Pan",
-            10,
-            170,
+            PAN_ANGLE_MIN,
+            PAN_ANGLE_MAX,
             key="camera_pan",
             disabled=not ros_live,
         )

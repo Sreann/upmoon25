@@ -20,7 +20,7 @@ import typer
 import serial.tools.list_ports
 
 from .config import Config, CONFIG_PATH, find_repo_root
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
 from .process import spawn, save_state, kill_all
 
 app = typer.Typer(add_completion=False)
@@ -595,7 +595,7 @@ def _run_terminal_subsystem_keyboard(
 
     def set_pan(value: int):
         nonlocal pan
-        pan = max(10, min(170, int(value)))
+        pan = clamp_pan_angle(value)
         if direct_ready and arduino is not None and arduino.write(ARDUINO_PAN_PIN, pan):
             return
         publish(pub_pan, pan)
@@ -1195,7 +1195,7 @@ def act(
             )
             raise typer.Exit(code=2)
 
-        int_value = max(10, min(170, int_value))
+        int_value = clamp_pan_angle(int_value)
         if _write_arduino_value(ARDUINO_PAN_PIN, int_value):
             typer.echo(f"Acting on {actuator.value}: direct-serial angle={int_value} -> Arduino pin {ARDUINO_PAN_PIN}")
             return

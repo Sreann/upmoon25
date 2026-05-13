@@ -25,6 +25,7 @@ from sensor_msgs.msg import CompressedImage, Image, PointCloud2
 from std_msgs.msg import Float32, Int16, Int32, String
 
 from lunar.dashboard.state import store
+from lunar.keyboard_topics import clamp_pan_angle
 
 HOLD_TIMEOUT_SEC = 0.25
 WATCHDOG_PERIOD_SEC = 0.05
@@ -475,7 +476,12 @@ class DashboardBridge(Node):
         self._clear_hold("bucket_vel")
 
     def publish_pan(self, angle: int) -> None:
-        clamped = max(10, min(170, int(angle)))
+        raw = int(angle)
+        # ``arduino_driver`` treats ``{-1, 0, 1}`` as jog/stop commands; absolute angles otherwise.
+        if raw in (-1, 1):
+            self.pub_pan.publish(Int16(data=raw))
+            return
+        clamped = clamp_pan_angle(raw)
         self.pub_pan.publish(Int16(data=clamped))
         store.update(camera_pan=clamped, active_pan_cmd="")
 
