@@ -27,11 +27,11 @@ CAMERA_WS_PORT = 8767
 CAMERA_PUSH_INTERVAL_SEC = 1.0 / 20.0
 
 _clients_lock = threading.Lock()
-_clients = {"rgb": set(), "rear": set(), "tracking": set()}
+_clients = {"rgb": set(), "rear": set()}
 _sensor_clients = set()
 _io_loop = None
-_last_push_ts = {"rgb": 0.0, "rear": 0.0, "tracking": 0.0}
-_latest_frames = {"rgb": b"", "rear": b"", "tracking": b""}
+_last_push_ts = {"rgb": 0.0, "rear": 0.0}
+_latest_frames = {"rgb": b"", "rear": b""}
 _last_sensor_push_ts = 0.0
 _sensor_state = {
     "time": [],
@@ -207,12 +207,6 @@ class CameraWsBridge(Node):
             lambda msg: self.image_compressed_cb("rear", msg),
             sensor_qos,
         )
-        self.create_subscription(
-            CompressedImage,
-            "/camera/tracking/image_compressed",
-            lambda msg: self.image_compressed_cb("tracking", msg),
-            sensor_qos,
-        )
         self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
         self.create_subscription(Twist, "cmd/velocity", self.cmd_vel_cb, 10)
         self.create_subscription(Float32, "/sensor/battery", self.battery_cb, 10)
@@ -342,7 +336,7 @@ def main():
         asyncio.set_event_loop(asyncio.new_event_loop())
         _io_loop = tornado.ioloop.IOLoop.current()
         app = tornado.web.Application([
-            (r"/camera/ws/(?P<camera_name>rgb|rear|tracking)", CameraWebSocketHandler),
+            (r"/camera/ws/(?P<camera_name>rgb|rear)", CameraWebSocketHandler),
             (r"/sensor/ws", SensorWebSocketHandler),
         ])
         app.listen(CAMERA_WS_PORT, address="0.0.0.0")

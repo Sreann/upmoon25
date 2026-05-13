@@ -30,7 +30,7 @@ VITE_MISSION_WS_URL=ws://ROBOT_OR_LAPTOP_IP:8770/mission/ws
 VITE_CAMERA_WS_BASE_URL=ws://ROBOT_OR_LAPTOP_IP:8767
 ```
 
-`VITE_MISSION_WS_URL` drives the typed mission snapshot and safe command acknowledgements. `VITE_CAMERA_WS_BASE_URL` reuses the existing camera frame WebSocket at `/camera/ws/rgb`, `/camera/ws/rear`, and `/camera/ws/tracking`.
+`VITE_MISSION_WS_URL` drives the typed mission snapshot and safe command acknowledgements. `VITE_CAMERA_WS_BASE_URL` reuses the existing camera frame WebSocket at `/camera/ws/rgb` and `/camera/ws/rear`.
 
 ## Current Scope
 

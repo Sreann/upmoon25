@@ -2,6 +2,8 @@
 
 This is the primary roadmap for taking the current robot from manual/dashboard operation to supervised autonomous excavation. It should be treated as the reference plan during field work, implementation, and testing.
 
+**Stack note:** Intel RealSense T265 is deprecated; localization work should assume `/odom` from wheel encoders, SLAM, or another chosen stack, not a tracking camera.
+
 ## Progress Ledger
 
 Last updated: 2026-05-12
@@ -62,7 +64,7 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
 ### Not Completed Yet
 
 - Confirming `/camera/depth/points` on the real robot.
-- Confirming T265, wheel odometry, TF, and SLAM viability.
+- Confirming wheel odometry, `/odom`, TF, and SLAM viability.
 - Proving the live top-down terrain grid is spatially correct on hardware.
 - Proving red/orange flag detection works in the Exolith lab.
 - Implementing navigation toward marked or detected zones.

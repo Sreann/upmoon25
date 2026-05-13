@@ -23,7 +23,7 @@ Move beyond instantaneous numbers to trends and history.
     *   **Tech:** `st.line_chart` hooked into a deque buffer in `state.py`.
     *   **Value:** Helps diagnose overheating or battery sag under load (e.g., digging into hard rock).
 *   **Wheel Odometry vs. Visual Odometry:**
-    *   **Feature:** Plot the divergence between T265 (`/odom`) and Wheel Encoders.
+    *   **Feature:** Plot the divergence between `/odom` (localization) and wheel encoder-derived velocity.
     *   **Value:** Detects wheel slippage (stuck in sand) immediately.
 *   **IR Radar Plot:**
     *   **Feature:** A semi-circle polar plot visualizing the IR sensor distances.

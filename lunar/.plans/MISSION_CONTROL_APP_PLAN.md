@@ -4,6 +4,8 @@ This document describes the desired operator-facing mission control dashboard. I
 
 The app should be a dense, single-page control surface for operating and supervising the lunar excavation robot. It should replace the normal need for Streamlit/RViz during field operation while still allowing developer debug tools when needed.
 
+**Stack note:** The Intel RealSense T265 tracking camera is not part of the UX or default bring-up anymore; camera surfaces are front/rear RGB plus depth health, and pose is represented generically via `/odom`.
+
 ## Progress Ledger
 
 Last updated: 2026-05-12
@@ -398,7 +400,7 @@ Sensors:
 - Front RGB camera
 - Rear RGB camera
 - Depth camera
-- T265 / tracking camera
+- Front/rear RGB cameras (no legacy tracking camera in UI)
 - Wheel encoders
 - IR sensors
 - Arduino
@@ -439,7 +441,7 @@ The current Streamlit dashboard has a useful hardware-inventory pattern that sho
 Useful hardware checks to keep:
 
 - RealSense driver import health
-- T265 detection
+- RealSense D435 detection (front/rear)
 - Front D435 detection
 - Rear D435 detection
 - Arduino detection
@@ -466,7 +468,7 @@ Show:
 - Current X/Y/yaw if available
 - Localization confidence
 - Drift/stationary warning
-- T265 status
+- `/odom` / localization topic status
 - Wheel encoder status
 - SLAM/map status
 - TF tree status summary
@@ -743,7 +745,7 @@ When replacing the Streamlit dashboard, make sure these existing useful features
 
 - Front camera feed
 - Rear camera feed
-- T265/tracking camera feed
+- Front/rear RGB camera feeds
 - Camera WebSocket feed behavior
 - Command metrics: linear velocity, position, battery, latency
 - OS monitor: CPU, RAM, CPU temperature

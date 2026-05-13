@@ -19,16 +19,6 @@ peak_current_limit = "60A"
 thermal_throttle_cpu = "85C"
 thermal_throttle_gpu = "90C"
 
-[vision.tracking_camera]
-model = "Intel RealSense T265"
-purpose = "High-precision V-SLAM Odometry"
-driver_lib = "pyrealsense2"
-ros_topics = ["/odom", "/camera/tracking/image_compressed"]
-status = "Critical"
-usb_speed_required = "USB 2.1+"
-max_cable_length = "1.0m"
-notes = "Does not provide internal covariance. Library requires specific installation steps on Jetson."
-
 [vision.rgb_camera]
 model = "Intel RealSense D435 RGB"
 purpose = "Live operator RGB feed"

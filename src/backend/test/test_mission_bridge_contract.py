@@ -72,3 +72,18 @@ def test_build_snapshot_exposes_terrain_grid_when_bridge_state_has_grid():
 
     mission_bridge._state.terrain_status = None
     mission_bridge._state.terrain_grid = None
+
+
+def test_camera_topics_exclude_deprecated_tracking_camera():
+    assert set(mission_bridge.CAMERA_TOPICS.keys()) == {"front", "rear"}
+    assert "/camera/tracking/image_compressed" not in mission_bridge.CAMERA_TOPICS.values()
+
+
+def test_build_snapshot_cameras_are_only_front_and_rear_streams():
+    snapshot = mission_bridge.build_snapshot()
+    ids = [c["id"] for c in snapshot["cameras"]]
+    assert ids == ["front", "rear"]
+    assert "tracking" not in ids
+    topics = [c["topic"] for c in snapshot["cameras"]]
+    assert "/camera/rgb/image_compressed" in topics
+    assert "/camera/rear/image_compressed" in topics
