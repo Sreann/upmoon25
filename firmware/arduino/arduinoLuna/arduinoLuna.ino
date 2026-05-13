@@ -36,6 +36,8 @@
 #define IR_SENSOR_LEFT A1
 #define DEBUG_SERIAL 0
 
+#include "encoder_quadrature.h"
+
 char input[INPUT_SIZE];
 Servo cam_servo;
 Servo lin_cam_servo;
@@ -49,10 +51,39 @@ long encoder_left_count;
 int8_t last_encoded_right;
 int8_t last_encoded_left;
 
-int8_t readEncoderState(uint8_t pin_a, uint8_t pin_b) {
+/*
+ * Two back-to-back digitalRead() calls can sample channel A and B at different times. At a
+ * quadrature edge that often yields a fake 2-bit pattern (or illegal step), which the decoder
+ * may interpret as forward then backward — especially when reversing or with backlash. On
+ * ATmega328P, right encoder uses PD4/PD5 and left uses PB3/PB4; read both via one PINx snapshot.
+ */
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
+static inline int8_t readEncoderStateRight() {
+  uint8_t p = PIND;
+  int8_t a = (int8_t)((p >> 4) & 1);
+  int8_t b = (int8_t)((p >> 5) & 1);
+  return (int8_t)((a << 1) | b);
+}
+
+static inline int8_t readEncoderStateLeft() {
+  uint8_t p = PINB;
+  int8_t a = (int8_t)((p >> 3) & 1);
+  int8_t b = (int8_t)((p >> 4) & 1);
+  return (int8_t)((a << 1) | b);
+}
+#else
+static int8_t readEncoderStatePair(uint8_t pin_a, uint8_t pin_b) {
   int8_t a = (int8_t)digitalRead(pin_a);
   int8_t b = (int8_t)digitalRead(pin_b);
   return (int8_t)((a << 1) | b);
+}
+#endif
+
+static void updateEncoderReading(int8_t *last_encoded, long *count, int8_t encoded) {
+  int8_t delta = encoder_quadrature_step(last_encoded, encoded);
+  if (delta != 0) {
+    *count += delta;
+  }
 }
 
 float irRawToDistanceCm(int raw_value) {
@@ -71,19 +102,6 @@ float irRawToDistanceCm(int raw_value) {
     return 999.0f;
   }
   return distance;
-}
-
-void updateEncoder(uint8_t pin_a, uint8_t pin_b, int8_t *last_encoded, long *count) {
-  int8_t encoded = readEncoderState(pin_a, pin_b);
-  int8_t sum = (int8_t)((*last_encoded << 2) | encoded);
-
-  // Valid quadrature transitions only. Any other transition is treated as noise.
-  if (sum == 0b1101 || sum == 0b0100 || sum == 0b0010 || sum == 0b1011) {
-    (*count)--;
-  } else if (sum == 0b1110 || sum == 0b0111 || sum == 0b0001 || sum == 0b1000) {
-    (*count)++;
-  }
-  *last_encoded = encoded;
 }
 
 // Converts 0->100 percent range to servo
@@ -181,13 +199,18 @@ void setup() {
   pinMode(DUMP_MOTOR, OUTPUT);
   digitalWrite(DUMP_MOTOR, HIGH);
 
-  // Encoder pins reserved for later bring-up
+  // Wheel encoders: quadrature on digital pins with internal pull-ups
   pinMode(ENCODE_R_A, INPUT_PULLUP);
   pinMode(ENCODE_R_B, INPUT_PULLUP);
   pinMode(ENCODE_L_A, INPUT_PULLUP);
   pinMode(ENCODE_L_B, INPUT_PULLUP);
-  last_encoded_right = readEncoderState(ENCODE_R_A, ENCODE_R_B);
-  last_encoded_left = readEncoderState(ENCODE_L_A, ENCODE_L_B);
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
+  last_encoded_right = readEncoderStateRight() & 3;
+  last_encoded_left = readEncoderStateLeft() & 3;
+#else
+  last_encoded_right = readEncoderStatePair(ENCODE_R_A, ENCODE_R_B) & 3;
+  last_encoded_left = readEncoderStatePair(ENCODE_L_A, ENCODE_L_B) & 3;
+#endif
 
   lin_cam_servo.attach(CAM_PIN);
   lin_bucket_servo.attach(BUCKET_PIN);
@@ -209,8 +232,13 @@ void loop() {
   lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
   lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
 
-  updateEncoder(ENCODE_R_A, ENCODE_R_B, &last_encoded_right, &encoder_right_count);
-  updateEncoder(ENCODE_L_A, ENCODE_L_B, &last_encoded_left, &encoder_left_count);
+#if defined(__AVR_ATmega328P__) || defined(__AVR_ATmega168__)
+  updateEncoderReading(&last_encoded_right, &encoder_right_count, readEncoderStateRight());
+  updateEncoderReading(&last_encoded_left, &encoder_left_count, readEncoderStateLeft());
+#else
+  updateEncoderReading(&last_encoded_right, &encoder_right_count, readEncoderStatePair(ENCODE_R_A, ENCODE_R_B));
+  updateEncoderReading(&last_encoded_left, &encoder_left_count, readEncoderStatePair(ENCODE_L_A, ENCODE_L_B));
+#endif
 
   int ir_right_raw = analogRead(IR_SENSOR_RIGHT);
   int ir_left_raw = analogRead(IR_SENSOR_LEFT);

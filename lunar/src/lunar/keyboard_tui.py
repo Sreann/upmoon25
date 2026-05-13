@@ -6,6 +6,8 @@ from typing import Optional
 
 import serial.tools.list_ports
 
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
+
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_PAN_PIN = 3
 
@@ -74,19 +76,21 @@ class RobotActuators:
             self.created_context = True
 
         self.node = Node("lunar_keyboard_tui")
+        kt = KEYBOARD_PUBLISHER_TOPICS
         self.publishers = {
-            "drive": self.node.create_publisher(Twist, "cmd/velocity", 10),
-            "camera-height": self.node.create_publisher(Int16, "/cmd/camera_height", 10),
-            "pan": self.node.create_publisher(Int16, "/cmd/pan", 10),
-            "bucket-pos": self.node.create_publisher(Int16, "/cmd/bucket_pos", 10),
-            "bucket-vel": self.node.create_publisher(Int16, "/cmd/bucket_vel", 10),
-            "conveyor": self.node.create_publisher(Int16, "/cmd/conveyor", 10),
+            "drive": self.node.create_publisher(Twist, kt["drive"], 10),
+            "camera-height": self.node.create_publisher(Int16, kt["camera-height"], 10),
+            "pan": self.node.create_publisher(Int16, kt["pan"], 10),
+            "bucket-pos": self.node.create_publisher(Int16, kt["bucket-pos"], 10),
+            "bucket-vel": self.node.create_publisher(Int16, kt["bucket-vel"], 10),
+            "conveyor": self.node.create_publisher(Int16, kt["conveyor"], 10),
         }
-        self.node.create_subscription(Int16, "/sensor/ir", self._on_ir, 10)
-        self.node.create_subscription(Int16, "/sensor/ir/right", self._on_ir_right, 10)
-        self.node.create_subscription(Int16, "/sensor/ir/left", self._on_ir_left, 10)
-        self.node.create_subscription(Int32, "/sensor/encoder/left", self._on_enc_left, 10)
-        self.node.create_subscription(Int32, "/sensor/encoder/right", self._on_enc_right, 10)
+        ks = KEYBOARD_SENSOR_TOPICS
+        self.node.create_subscription(Int16, ks["ir_general"], self._on_ir, 10)
+        self.node.create_subscription(Int16, ks["ir_right"], self._on_ir_right, 10)
+        self.node.create_subscription(Int16, ks["ir_left"], self._on_ir_left, 10)
+        self.node.create_subscription(Int32, ks["encoder_left"], self._on_enc_left, 10)
+        self.node.create_subscription(Int32, ks["encoder_right"], self._on_enc_right, 10)
         self.mode = "ros-topic"
         self.control_path = "ROS topics -> robot stack"
         self.status = "publishing robot command topics"

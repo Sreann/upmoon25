@@ -12,3 +12,4 @@ catkin_pkg
 lark
 PyYAML
 netifaces
+textual==0.86.3
