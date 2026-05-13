@@ -1303,7 +1303,6 @@ def build(
     subprocess.run(["pkill", "-f", "bucket_spin"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "rgb_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "depth_driver"], stderr=subprocess.DEVNULL)
-    subprocess.run(["pkill", "-f", "t265_driver"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "mining_controller"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "dig_sequence"], stderr=subprocess.DEVNULL)
     subprocess.run(["pkill", "-f", "tag_detector"], stderr=subprocess.DEVNULL)
@@ -1513,16 +1512,7 @@ def check(
             if "vision" in hw_data:
                 for v_name, v_cfg in hw_data["vision"].items():
                     model = v_cfg.get("model", v_name)
-                    if v_name == "tracking_camera":
-                        found = realsense["tracking_connected"]
-                        if found:
-                            detail = {"detected_device": "Intel RealSense T265"}
-                        elif realsense["driver_ok"]:
-                            detail = {"detected_device": "T265 not detected"}
-                        else:
-                            detail = {"detected_device": "RealSense checker unavailable"}
-                        status = "CONNECTED" if found else ("NO DEVICE" if realsense["driver_ok"] else "CHECKER MISSING")
-                    elif v_name == "rgb_camera":
+                    if v_name == "rgb_camera":
                         found = realsense["front_connected"]
                         if found:
                             detail = {"detected_serial": "018322071465"}

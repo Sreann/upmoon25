@@ -2,6 +2,8 @@
 
 Use this checklist before attempting autonomous driving, mapping, or dig/dump cycles. The goal is to replace guesses with facts about what works on the real robot today.
 
+**Stack note:** Intel RealSense T265 is deprecated for this program. Treat `/odom` as coming from your active localization source (for example wheel odometry or SLAM), not from a tracking camera.
+
 ## 1. Safety First
 
 - [ ] Emergency stop is accessible.
@@ -73,7 +75,7 @@ Concerns:
 
 - [ ] Front / actuator-mounted RGB camera feed works.
 - [ ] Rear RGB camera feed works.
-- [ ] Tracking/T265 camera feed works, if installed.
+- [ ] Front and rear RGB streams work.
 - [ ] Camera feed latency is acceptable.
 - [ ] Camera height control works.
 - [ ] Camera pan control works.
@@ -132,7 +134,7 @@ Suspicious transforms:
 - [ ] `/odom` exists.
 - [ ] `/odom` changes when the robot moves.
 - [ ] `/odom` stays mostly stable when the robot is stationary.
-- [ ] T265 is installed and detected, if applicable.
+- [ ] `/odom` is present and sane for your localization stack.
 - [ ] Wheel encoder topics publish.
 - [ ] Encoder signs/scales make sense, if available.
 - [ ] Localization confidence is good enough for short test moves, or marked as not ready.

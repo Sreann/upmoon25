@@ -11,7 +11,6 @@ import streamlit as st
 import tomli
 
 
-T265_SERIAL = "943222111294"
 FRONT_D435_SERIAL = "018322071465"
 REAR_D435_SERIAL = "018322071045"
 D435_SERIALS = {FRONT_D435_SERIAL, REAR_D435_SERIAL}
@@ -76,7 +75,6 @@ _REALSENSE_TS = 0.0
 _REALSENSE_VALUE = {
     "driver_ok": False,
     "devices": [],
-    "tracking_connected": False,
     "front_connected": False,
     "rear_connected": False,
 }
@@ -87,14 +85,12 @@ def _detect_realsense_via_system_python():
         """
         import json
 
-        T265_SERIAL = {t265_serial!r}
         FRONT_D435_SERIAL = {front_d435_serial!r}
         REAR_D435_SERIAL = {rear_d435_serial!r}
 
         result = {{
             "driver_ok": False,
             "devices": [],
-            "tracking_connected": False,
             "front_connected": False,
             "rear_connected": False,
         }}
@@ -117,9 +113,6 @@ def _detect_realsense_via_system_python():
                 name = dev.get_info(rs.camera_info.name)
                 serial = dev.get_info(rs.camera_info.serial_number)
                 result["devices"].append({{"name": name, "serial": serial}})
-                upper_name = name.upper()
-                if serial == T265_SERIAL or "T265" in upper_name or "TRACKING" in upper_name:
-                    result["tracking_connected"] = True
                 if serial == FRONT_D435_SERIAL:
                     result["front_connected"] = True
                 if serial == REAR_D435_SERIAL:
@@ -130,7 +123,6 @@ def _detect_realsense_via_system_python():
         print(json.dumps(result))
         """
     ).format(
-        t265_serial=T265_SERIAL,
         front_d435_serial=FRONT_D435_SERIAL,
         rear_d435_serial=REAR_D435_SERIAL,
     )
@@ -147,7 +139,6 @@ def _detect_realsense_via_system_python():
             return {
                 "driver_ok": False,
                 "devices": [],
-                "tracking_connected": False,
                 "front_connected": False,
                 "rear_connected": False,
             }
@@ -164,7 +155,6 @@ def _detect_realsense_via_system_python():
         return {
             "driver_ok": False,
             "devices": [],
-            "tracking_connected": False,
             "front_connected": False,
             "rear_connected": False,
         }
@@ -172,7 +162,6 @@ def _detect_realsense_via_system_python():
         return {
             "driver_ok": False,
             "devices": [],
-            "tracking_connected": False,
             "front_connected": False,
             "rear_connected": False,
         }
@@ -258,7 +247,6 @@ def _detect_realsense_devices():
         result = {
             "driver_ok": rs is not None,
             "devices": [],
-            "tracking_connected": False,
             "front_connected": False,
             "rear_connected": False,
         }
@@ -270,9 +258,6 @@ def _detect_realsense_devices():
                     serial = dev.get_info(rs.camera_info.serial_number)
                     result["devices"].append({"name": name, "serial": serial})
 
-                    upper_name = name.upper()
-                    if serial == T265_SERIAL or "T265" in upper_name or "TRACKING" in upper_name:
-                        result["tracking_connected"] = True
                     if serial == FRONT_D435_SERIAL:
                         result["front_connected"] = True
                     if serial == REAR_D435_SERIAL:
@@ -334,11 +319,7 @@ def check_hardware_status(root_path: Path):
     if "vision" in hw_data:
         for v_name, v_cfg in hw_data["vision"].items():
             model = v_cfg.get("model", v_name)
-            if v_name == "tracking_camera":
-                connected = realsense["tracking_connected"]
-                status = _status_connected(connected, realsense["driver_ok"], on_jetson)
-                detail = T265_SERIAL if connected else "T265 not detected"
-            elif v_name == "rgb_camera":
+            if v_name == "rgb_camera":
                 connected = realsense["front_connected"]
                 status = _status_connected(connected, realsense["driver_ok"], on_jetson)
                 detail = FRONT_D435_SERIAL if connected else "Front D435 RGB not detected"

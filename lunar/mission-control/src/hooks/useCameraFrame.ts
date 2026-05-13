@@ -6,7 +6,6 @@ const RECONNECT_MS = 500
 const cameraSocketNames: Record<CameraStream['id'], string> = {
   front: 'rgb',
   rear: 'rear',
-  tracking: 'tracking',
 }
 
 export function useCameraFrame(camera: CameraStream, wsBase: string | undefined) {

@@ -25,7 +25,6 @@ MISSING_TOPIC_SEC = 3.0
 CAMERA_TOPICS = {
     "front": "/camera/rgb/image_compressed",
     "rear": "/camera/rear/image_compressed",
-    "tracking": "/camera/tracking/image_compressed",
 }
 SAFETY_TOPICS = {
     "/camera/depth/points",
@@ -237,7 +236,7 @@ def build_snapshot() -> Dict[str, Any]:
         cameras.append(
             {
                 "id": camera_id,
-                "name": {"front": "Front D435 RGB", "rear": "Rear D435 RGB", "tracking": "Tracking Camera"}[camera_id],
+                "name": {"front": "Front D435 RGB", "rear": "Rear D435 RGB"}[camera_id],
                 "topic": topic,
                 "status": status,
                 "fps": f"{sample.rate_hz:.0f}" if sample.rate_hz > 0 else "--",
@@ -470,7 +469,6 @@ def _run_ros_node() -> None:
             for topic, note, safety in [
                 ("/camera/rgb/image_compressed", "front RGB", False),
                 ("/camera/rear/image_compressed", "rear RGB", False),
-                ("/camera/tracking/image_compressed", "tracking camera", False),
                 ("/camera/depth/points", "depth grid source", True),
                 ("/odom", "localization source", True),
                 ("/tf", "frame transforms", True),
@@ -480,7 +478,6 @@ def _run_ros_node() -> None:
 
             self.create_subscription(CompressedImage, "/camera/rgb/image_compressed", lambda msg: self.camera_cb("/camera/rgb/image_compressed", msg), sensor_qos)
             self.create_subscription(CompressedImage, "/camera/rear/image_compressed", lambda msg: self.camera_cb("/camera/rear/image_compressed", msg), sensor_qos)
-            self.create_subscription(CompressedImage, "/camera/tracking/image_compressed", lambda msg: self.camera_cb("/camera/tracking/image_compressed", msg), sensor_qos)
             self.create_subscription(PointCloud2, "/camera/depth/points", self.point_cloud_cb, sensor_qos)
             self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
             self.create_subscription(Twist, "cmd/velocity", self.cmd_vel_cb, 10)

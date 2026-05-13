@@ -52,7 +52,7 @@ export type TopicHealth = {
 }
 
 export type CameraStream = {
-  id: 'front' | 'rear' | 'tracking'
+  id: 'front' | 'rear'
   name: string
   topic: string
   status: StreamStatus

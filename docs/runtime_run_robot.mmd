@@ -12,7 +12,6 @@ flowchart LR
     RGB_DRV[rgb_driver]
     CONVEYOR[conveyor]
     BUCKET[bucket_spin]
-    T265[t265_driver]
     DEPTH[depth_driver]
   end
 
@@ -32,7 +31,6 @@ flowchart LR
   COMP -->|launches  - RGB camera driver - | RGB_DRV
   COMP -->|launches  - conveyor motor control - | CONVEYOR
   COMP -->|launches  - bucket motor control - | BUCKET
-  COMP -->|launches  - publishes /odom pose - | T265
   COMP -->|launches  - publishes /camera/depth/points - | DEPTH
   COMP -->|launches  - AprilTag detection - | TAG_DET
   COMP -->|launches  - mining behavior state machine - | MINER
