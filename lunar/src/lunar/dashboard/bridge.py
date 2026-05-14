@@ -32,7 +32,9 @@ WATCHDOG_PERIOD_SEC = 0.05
 CAMERA_STREAM_PORT = 8766
 CAMERA_WS_PORT = 8767
 CAMERA_STREAM_BOUNDARY = b"frame"
-CAMERA_PUSH_INTERVAL_SEC = 1.0 / 20.0
+# Legacy Streamlit path: throttle outbound JPEG on /camera/ws (see ``max_camera_push_hz`` on ``DashboardBridge``).
+_DEFAULT_CAMERA_PUSH_HZ = 30.0
+CAMERA_PUSH_INTERVAL_SEC = 1.0 / _DEFAULT_CAMERA_PUSH_HZ
 
 
 def _latest_camera_jpeg() -> bytes:
@@ -176,7 +178,7 @@ def _schedule_camera_frame(payload: bytes):
     if not payload:
         return
     now = time.monotonic()
-    if now - _last_camera_push_ts < CAMERA_PUSH_INTERVAL_SEC:
+    if CAMERA_PUSH_INTERVAL_SEC > 0.0 and (now - _last_camera_push_ts < CAMERA_PUSH_INTERVAL_SEC):
         return
     _last_camera_push_ts = now
 
@@ -189,6 +191,19 @@ def _schedule_camera_frame(payload: bytes):
 class DashboardBridge(Node):
     def __init__(self):
         super().__init__("lunar_dashboard_bridge")
+
+        global CAMERA_PUSH_INTERVAL_SEC
+        self.declare_parameter("max_camera_push_hz", _DEFAULT_CAMERA_PUSH_HZ)
+        cam_hz = float(self.get_parameter("max_camera_push_hz").value)
+        if cam_hz <= 0.0:
+            CAMERA_PUSH_INTERVAL_SEC = 0.0
+        else:
+            cam_hz = max(1.0, min(cam_hz, 60.0))
+            CAMERA_PUSH_INTERVAL_SEC = 1.0 / cam_hz
+        self.get_logger().info(
+            f"dashboard bridge /camera/ws JPEG cap: {'unlimited' if CAMERA_PUSH_INTERVAL_SEC <= 0.0 else f'{round(1.0 / CAMERA_PUSH_INTERVAL_SEC, 2)} Hz'} "
+            f"(param max_camera_push_hz)"
+        )
 
         sensor_qos = QoSProfile(
             depth=3,
