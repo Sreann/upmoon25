@@ -1,10 +1,111 @@
-import type { MissionControlSnapshot } from './types'
+import type { MissionControlSnapshot, TerrainGridSnapshot } from './types'
 
-export type DemoScenario = 'nominal' | 'degraded' | 'offline'
+export type DemoScenario = 'nominal' | 'degraded' | 'offline' | 'terrain_lab'
+
+/** Synthetic cells matching backend `OccupancyGrid` convention: -1 unknown, 0 free, 60 caution, 100 obstacle. */
+export function terrainLabOccupancyCells(width: number, height: number): number[] {
+  const cells: number[] = []
+  const mid = (width - 1) / 2
+  const wallHalf = Math.max(8, Math.round(width * 0.028))
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = Math.abs(x - mid)
+      let v = 0
+      // Unknown wedge ahead (top of grid = forward in canvas)
+      if (y < height * 0.12 && dx < width * 0.16) v = -1
+      // Caution band (mid range)
+      if (y >= Math.floor(height * 0.22) && y < Math.floor(height * 0.38) && dx > width * 0.11 && dx < width * 0.2) v = 60
+      // Inner caution ring (thin) for high-res visibility
+      if (y >= Math.floor(height * 0.55) && y < Math.floor(height * 0.62) && dx > width * 0.06 && dx < width * 0.09) v = 60
+      // Side walls with slight waviness
+      const wave = Math.round(2.2 * Math.sin(y * 0.12))
+      if (x <= wallHalf + wave || x >= width - wallHalf + wave) v = 100
+      cells.push(v)
+    }
+  }
+  return cells
+}
+
+function buildMockTerrainGrid(scenario: DemoScenario): TerrainGridSnapshot {
+  if (scenario === 'offline') {
+    const gw = 96
+    const gh = 96
+    const cells = Array.from({ length: gw * gh }, () => -1)
+    return {
+      width: gw,
+      height: gh,
+      resolution: 0.1,
+      frameId: 'base_link',
+      ageMs: null,
+      status: 'missing',
+      cells,
+      obstacleCells: 0,
+      cautionCells: 0,
+      unknownCells: gw * gh,
+      note: 'offline demo (cells all unknown; no bridge grid)',
+    }
+  }
+
+  if (scenario === 'terrain_lab') {
+    const gw = 256
+    const gh = 256
+    const cells = terrainLabOccupancyCells(gw, gh)
+    const obstacleCells = cells.filter((c) => c >= 90).length
+    const cautionCells = cells.filter((c) => c > 0 && c < 90).length
+    const unknownCells = cells.filter((c) => c < 0).length
+    return {
+      width: gw,
+      height: gh,
+      resolution: 0.05,
+      frameId: 'base_link',
+      ageMs: 88,
+      status: 'live',
+      cells,
+      obstacleCells,
+      cautionCells,
+      unknownCells,
+      note: 'fake high-res occupancy (256×256 @ 5 cm ≈ 12.8 m square; -1 / 0 / 60 / 100)',
+    }
+  }
+
+  const gw = 96
+  const gh = 96
+  const degraded = scenario === 'degraded'
+  const cells = Array.from({ length: gw * gh }, (_, index) => {
+    const x = index % gw
+    const y = Math.floor(index / gw)
+    const x12 = Math.min(11, Math.floor((x * 12) / gw))
+    const y12 = Math.min(11, Math.floor((y * 12) / gh))
+    if ((x12 === 5 || x12 === 6) && y12 > 7) return 0
+    if ((x12 > 7 && y12 < 4) || (x12 === 2 && y12 === 5) || (x12 === 3 && y12 === 5)) return 100
+    // Small unknown patches only (avoid huge gray corners when grid is large)
+    const cornerR = Math.max(3, Math.round(Math.min(gw, gh) * 0.04))
+    if ((x < cornerR && y < cornerR) || (x >= gw - cornerR && y >= gh - cornerR)) return -1
+    if (x12 === 7 && y12 === 6) return 60
+    return 0
+  })
+  const obstacleCells = cells.filter((c) => c >= 90).length
+  const cautionCells = cells.filter((c) => c > 0 && c < 90).length
+  const unknownCells = cells.filter((c) => c < 0).length
+  return {
+    width: gw,
+    height: gh,
+    resolution: 0.1,
+    frameId: 'base_link',
+    ageMs: degraded ? 420 : 95,
+    status: degraded ? 'stale' : 'live',
+    cells,
+    obstacleCells,
+    cautionCells,
+    unknownCells,
+    note: degraded ? 'mock stale grid' : 'mock local grid (96×96 @ 10 cm)',
+  }
+}
 
 export function createMockSnapshot(scenario: DemoScenario = 'degraded'): MissionControlSnapshot {
   const offline = scenario === 'offline'
   const degraded = scenario === 'degraded'
+  const terrainLab = scenario === 'terrain_lab'
   const trends = Array.from({ length: 12 }, (_, index) => ({
     label: `${index * 10}s`,
     cpu: offline ? 0 : Math.round(28 + Math.sin(index / 2) * 8 + (degraded ? 4 : 0)),
@@ -20,7 +121,8 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
       armed: false,
       estop: false,
       mode: offline ? 'Manual' : degraded ? 'Assisted' : 'Auto',
-      state: offline ? 'IDLE' : degraded ? 'WAIT_FOR_ZONE_MARKS' : 'NAV_TO_DIG',
+      state: offline ? 'IDLE' : degraded ? 'AWAIT_MARK_DIG' : 'NAV_TO_DIG',
+      navigationActive: false,
       target: offline ? 'No robot connection' : degraded ? 'Dump zone pending' : 'Dig zone',
       heartbeatMs: offline ? null : degraded ? 86 : 42,
       confidence: offline ? 0 : degraded ? 72 : 91,
@@ -30,17 +132,92 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
         ? 'Robot bridge is offline. Motion controls must remain disabled.'
         : degraded
           ? 'Waiting for operator-marked dig and dump zones'
-          : 'Driving short segment toward marked dig zone',
+          : terrainLab
+            ? 'Terrain lab: fake occupancy grid for UI / mobile checks'
+            : 'Driving short segment toward marked dig zone',
       lastDecision: offline
         ? 'No live telemetry available'
         : degraded
           ? 'Depth grid healthy; localization source not selected'
-          : 'Local corridor clear; proceeding at limited speed',
+          : terrainLab
+            ? 'Synthetic corridor + unknown wedge (no ROS)'
+            : 'Local corridor clear; proceeding at limited speed',
       nextTransition: offline
         ? 'Reconnect bridge'
         : degraded
           ? 'Mark zones -> NAV_TO_DIG'
           : 'Reach dig tolerance -> DIG',
+      navMission:
+        offline || degraded
+          ? null
+          : terrainLab
+            ? {
+                phase: 'MAP_EXPLORE',
+                controllerMode: 'mission_twist',
+                detail: 'in_place_spin_for_local_grid',
+                digAutonomyEnabled: false,
+                navCorridorEnabled: false,
+                unknownFraction: 0.42,
+              }
+            : {
+                phase: 'FOLLOW_TO_DIG',
+                controllerMode: 'corridor_follow',
+                detail: 'follow_zone_goal',
+                digAutonomyEnabled: false,
+                navCorridorEnabled: true,
+                digDistanceM: 1.25,
+                unknownFraction: 0.18,
+              },
+      digSequence:
+        offline || degraded
+          ? null
+          : terrainLab
+            ? {
+                phase: 'SETUP_IR',
+                waitForNavDigArm: true,
+                digArm: false,
+                irValue: 12,
+                irTarget: 17,
+                encoderValue: 40,
+                encoderTarget: 120,
+                encoderTopic: '/sensor/encoder/left',
+                cycleCounter: 0,
+                maxCyclesLe: 5,
+                bucketPosCommanded: 24,
+                keepBucketChainUntilDone: false,
+                phaseElapsedSec: 2.4,
+                conveyorRemainingSec: null,
+                useLocalTerrainGrid: true,
+                terrainHadGrid: true,
+                terrainFresh: true,
+                terrainForwardOk: true,
+                terrainReverseOk: true,
+                terrainGateForward: 'center_clear',
+                terrainGateReverse: 'center_clear',
+              }
+            : {
+                phase: 'DRIVE_FORWARD',
+                waitForNavDigArm: false,
+                digArm: false,
+                irValue: 17,
+                irTarget: 17,
+                encoderValue: 88,
+                encoderTarget: 120,
+                encoderTopic: '/sensor/encoder/left',
+                cycleCounter: 1,
+                maxCyclesLe: 5,
+                bucketPosCommanded: 22,
+                keepBucketChainUntilDone: false,
+                phaseElapsedSec: 1.2,
+                conveyorRemainingSec: null,
+                useLocalTerrainGrid: true,
+                terrainHadGrid: true,
+                terrainFresh: true,
+                terrainForwardOk: true,
+                terrainReverseOk: false,
+                terrainGateForward: 'center_clear',
+                terrainGateReverse: 'blocked',
+              },
     },
     metrics: [
       { label: 'Linear Vel', value: offline ? '--' : degraded ? '0.00 m/s' : '0.18 m/s', detail: offline ? 'no cmd topic' : 'cmd/velocity', status: offline ? 'bad' : 'idle' },
@@ -110,37 +287,7 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
       { label: 'Localization source', status: degraded ? 'warn' : offline ? 'bad' : 'ok', detail: degraded ? 'T265/odom unknown' : offline ? 'no odom' : 'T265 provisional' },
       { label: 'Dig/dump controls', status: offline ? 'bad' : 'ok', detail: offline ? 'disabled' : 'mock command path ready' },
     ],
-    terrainGrid: (() => {
-      const gw = 30
-      const gh = 30
-      const cells = Array.from({ length: gw * gh }, (_, index) => {
-        const x = index % gw
-        const y = Math.floor(index / gw)
-        const x12 = Math.min(11, Math.floor((x * 12) / gw))
-        const y12 = Math.min(11, Math.floor((y * 12) / gh))
-        if ((x12 === 5 || x12 === 6) && y12 > 7) return 2
-        if ((x12 > 7 && y12 < 4) || (x12 === 2 && y12 === 5) || (x12 === 3 && y12 === 5)) return 100
-        if ((x12 < 3 && y12 < 3) || (x12 > 9 && y12 > 8)) return -1
-        if (x12 === 7 && y12 === 6) return 60
-        return 0
-      })
-      const obstacleCells = cells.filter((c) => c >= 90).length
-      const cautionCells = cells.filter((c) => c > 0 && c < 90).length
-      const unknownCells = cells.filter((c) => c < 0).length
-      return {
-        width: gw,
-        height: gh,
-        resolution: 0.1,
-        frameId: 'base_link',
-        ageMs: offline ? null : degraded ? 420 : 95,
-        status: offline ? 'missing' : degraded ? 'stale' : 'live',
-        cells,
-        obstacleCells: offline ? 0 : obstacleCells,
-        cautionCells: offline ? 0 : cautionCells,
-        unknownCells: offline ? gw * gh : unknownCells,
-        note: offline ? 'no terrain grid' : degraded ? 'mock stale grid' : 'mock local grid (30×30 @ 10 cm, matches standard preset footprint)',
-      }
-    })(),
+    terrainGrid: buildMockTerrainGrid(scenario),
     rawConfig: `# dashboard hardware summary
 [vision.rgb_camera]
 topic = "/camera/rgb/image_compressed"

@@ -14,6 +14,12 @@ function resolveMissionWsUrl(): string | undefined {
   ) {
     return undefined
   }
+  if (import.meta.env.VITE_FORCE_MOCK === '1' || import.meta.env.VITE_FORCE_MOCK === 'true') {
+    return undefined
+  }
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mock') === '1') {
+    return undefined
+  }
   const env = (import.meta.env.VITE_MISSION_WS_URL as string | undefined)?.trim()
   if (env) return env
   if (typeof window === 'undefined') return undefined
@@ -23,7 +29,8 @@ function resolveMissionWsUrl(): string | undefined {
 
 export function useMissionBridge(scenario: DemoScenario) {
   const [liveUrl] = useState(() => resolveMissionWsUrl())
-  const [mode, setMode] = useState<BridgeMode>(() => (liveUrl ? 'live' : 'mock'))
+  /** Default mock so zone marking and map picks work without mission_bridge; switch to Live when ROS is up. */
+  const [mode, setMode] = useState<BridgeMode>('mock')
   const [liveSnapshot, setLiveSnapshot] = useState<MissionControlSnapshot>(() => createMockSnapshot(scenario))
   const [liveStatus, setLiveStatus] = useState<LiveBridgeStatus>({
     connected: false,

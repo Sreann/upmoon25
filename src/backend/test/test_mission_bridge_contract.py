@@ -72,3 +72,79 @@ def test_build_snapshot_exposes_terrain_grid_when_bridge_state_has_grid():
 
     mission_bridge._state.terrain_status = None
     mission_bridge._state.terrain_grid = None
+
+
+def test_build_snapshot_mission_includes_navigation_active():
+    mission_bridge._state.navigation_active = True
+    snap = mission_bridge.build_snapshot()
+    assert "navigationActive" in snap["mission"]
+    assert snap["mission"]["navigationActive"] is True
+    mission_bridge._state.navigation_active = False
+
+
+def test_build_snapshot_mission_includes_nav_mission_when_set():
+    mission_bridge._state.nav_mission_state = {
+        "phase": "AT_DIG_HANDOFF",
+        "controller_mode": "none",
+        "dig_autonomy_enabled": True,
+        "nav_controller_corridor_enabled": False,
+    }
+    snap = mission_bridge.build_snapshot()
+    nm = snap["mission"]["navMission"]
+    assert nm is not None
+    assert nm["phase"] == "AT_DIG_HANDOFF"
+    assert nm["controllerMode"] == "none"
+    assert nm["digAutonomyEnabled"] is True
+    assert nm["navCorridorEnabled"] is False
+    mission_bridge._state.nav_mission_state = None
+
+
+def test_build_snapshot_mission_nav_mission_key_present_when_cleared():
+    mission_bridge._state.nav_mission_state = None
+    snap = mission_bridge.build_snapshot()
+    assert "navMission" in snap["mission"]
+    assert snap["mission"]["navMission"] is None
+
+
+def test_build_snapshot_mission_includes_dig_sequence_when_set():
+    mission_bridge._state.dig_sequence_state = {
+        "phase": "CONVEYOR_DUMP",
+        "wait_for_nav_dig_arm": False,
+        "dig_arm": False,
+        "ir_value": 17,
+        "ir_target": 17,
+        "encoder_value": 0,
+        "encoder_target": 120,
+        "encoder_topic": "/sensor/encoder/left",
+        "cycle_counter": 2,
+        "max_cycles_le": 5,
+        "bucket_pos_commanded": 26,
+        "keep_bucket_chain_until_done": False,
+        "phase_elapsed_sec": 1.5,
+        "conveyor_remaining_sec": 2.1,
+        "use_local_terrain_grid": True,
+        "terrain_had_grid": True,
+        "terrain_fresh": True,
+        "terrain_forward_ok": False,
+        "terrain_reverse_ok": True,
+        "terrain_gate_forward": "blocked",
+        "terrain_gate_reverse": "center_clear",
+    }
+    snap = mission_bridge.build_snapshot()
+    ds = snap["mission"]["digSequence"]
+    assert ds is not None
+    assert ds["phase"] == "CONVEYOR_DUMP"
+    assert ds["waitForNavDigArm"] is False
+    assert ds["encoderTopic"] == "/sensor/encoder/left"
+    assert ds["conveyorRemainingSec"] == 2.1
+    assert ds["useLocalTerrainGrid"] is True
+    assert ds["terrainForwardOk"] is False
+    assert ds["terrainGateForward"] == "blocked"
+    mission_bridge._state.dig_sequence_state = None
+
+
+def test_build_snapshot_mission_dig_sequence_key_present_when_cleared():
+    mission_bridge._state.dig_sequence_state = None
+    snap = mission_bridge.build_snapshot()
+    assert "digSequence" in snap["mission"]
+    assert snap["mission"]["digSequence"] is None

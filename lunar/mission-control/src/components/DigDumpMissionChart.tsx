@@ -4,8 +4,11 @@ import type { MissionState } from '../bridge/types'
 /** Ordered mission states for dig/dump cycle (loops RETURN_TO_DIG → IDLE). */
 const MAIN_FLOW: MissionState[] = [
   'IDLE',
-  'HEALTH_CHECK',
-  'WAIT_FOR_ZONE_MARKS',
+  'PERCEPTION_FAULT',
+  'AWAIT_MARK_DIG',
+  'AWAIT_MARK_DUMP',
+  'NAV_READY',
+  'NAV_ACTIVE',
   'DISCOVER_DUMP_ZONE',
   'NAV_TO_DIG',
   'DIG',
@@ -16,11 +19,20 @@ const MAIN_FLOW: MissionState[] = [
 
 const BRANCH_STATES: MissionState[] = ['RECOVERY', 'PAUSED', 'ABORTED', 'ESTOP']
 
-/** Single-line labels that fit inside small SVG nodes. */
 const NODE_LABEL: Record<MissionState, string> = {
   IDLE: 'IDLE',
   HEALTH_CHECK: 'HEALTH',
   WAIT_FOR_ZONE_MARKS: 'WAIT ZN',
+  READY: 'READY',
+  PERCEPTION_FAULT: 'PERC',
+  PERCEPTION_STALE: 'P-STALE',
+  LOCALIZATION_LOST: 'NO ODOM',
+  TERRAIN_FAULT: 'GRID',
+  TERRAIN_STALE: 'G-STALE',
+  AWAIT_MARK_DIG: 'MARK DG',
+  AWAIT_MARK_DUMP: 'MARK DP',
+  NAV_READY: 'NAV RDY',
+  NAV_ACTIVE: 'NAV ON',
   DISCOVER_DUMP_ZONE: 'FIND DP',
   NAV_TO_DIG: '→ DIG',
   DIG: 'DIG',
@@ -94,7 +106,8 @@ const CY = VB / 2
 const R = 198
 const NODE_R = 30
 
-export function AutonomyStateMachineChart({ current }: { current: MissionState }) {
+/** Circular dig/dump mission architecture (target FSM — not fully executed on-robot yet). */
+export function DigDumpMissionChart({ current }: { current: MissionState }) {
   const n = MAIN_FLOW.length
   const mainIdx = MAIN_FLOW.indexOf(current)
   const unknown = !MAIN_FLOW.includes(current) && !BRANCH_STATES.includes(current)
@@ -106,24 +119,24 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
         <span>
-          Current: <span className="font-mono text-amber-200">{current}</span>
+          Mission state: <span className="font-mono text-amber-200">{current}</span>
           {unknown ? <span className="ml-2 text-amber-500">(not in diagram set — still shown)</span> : null}
         </span>
-        <span className="hidden sm:inline">Circular main loop · arrows follow dig/dump cycle</span>
+        <span className="hidden sm:inline">Dig / dump loop · clockwise</span>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950/50 p-2 sm:p-4">
         <svg
           role="img"
-          aria-label="Autonomy mission state machine as a circular loop"
+          aria-label="Dig and dump mission state machine as a circular loop"
           viewBox={`0 0 ${VB} ${VB}`}
           className="mx-auto h-auto w-full max-w-[min(100%,520px)]"
           preserveAspectRatio="xMidYMid meet"
         >
-          <title>Mission state machine — main path is a closed loop</title>
+          <title>Dig dump mission — main path is a closed loop</title>
           <defs>
             <marker
-              id="asm-arrow"
+              id="ddm-arrow"
               markerWidth="8"
               markerHeight="8"
               refX="7"
@@ -134,7 +147,7 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
               <path d="M0,0 L8,4 L0,8 z" fill="#64748b" />
             </marker>
             <marker
-              id="asm-arrow-active"
+              id="ddm-arrow-active"
               markerWidth="9"
               markerHeight="9"
               refX="8"
@@ -144,7 +157,7 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
             >
               <path d="M0,0 L9,4.5 L0,9 z" fill="#fbbf24" />
             </marker>
-            <filter id="asm-glow" x="-40%" y="-40%" width="180%" height="180%">
+            <filter id="ddm-glow" x="-40%" y="-40%" width="180%" height="180%">
               <feGaussianBlur stdDeviation="1.2" result="b" />
               <feMerge>
                 <feMergeNode in="b" />
@@ -153,10 +166,8 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
             </filter>
           </defs>
 
-          {/* faint ring guide */}
           <circle cx={CX} cy={CY} r={R} fill="none" stroke="rgba(51,65,85,0.35)" strokeWidth="1" strokeDasharray="4 6" />
 
-          {/* edges: forward loop including RETURN_TO_DIG → IDLE */}
           {MAIN_FLOW.map((_, i) => {
             const j = (i + 1) % n
             const { x1, y1, x2, y2 } = edgeSegment(pos[i].x, pos[i].y, pos[j].x, pos[j].y, NODE_R)
@@ -171,19 +182,17 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
                 stroke={isActiveEdge ? '#fbbf24' : '#475569'}
                 strokeWidth={isActiveEdge ? 2 : 1.25}
                 strokeOpacity={isActiveEdge ? 0.95 : 0.75}
-                markerEnd={isActiveEdge ? 'url(#asm-arrow-active)' : 'url(#asm-arrow)'}
-                filter={isActiveEdge ? 'url(#asm-glow)' : undefined}
+                markerEnd={isActiveEdge ? 'url(#ddm-arrow-active)' : 'url(#ddm-arrow)'}
+                filter={isActiveEdge ? 'url(#ddm-glow)' : undefined}
               />
             )
           })}
 
-          {/* loop-back label near chord from last to first (shorter chord — place text at midpoint) */}
           {(() => {
             const last = n - 1
             const { x1, y1, x2, y2 } = edgeSegment(pos[last].x, pos[last].y, pos[0].x, pos[0].y, NODE_R)
             const mx = (x1 + x2) / 2
             const my = (y1 + y2) / 2
-            /* nudge label toward center so it reads as “loop” */
             const vx = CX - mx
             const vy = CY - my
             const vlen = Math.hypot(vx, vy) || 1
@@ -203,7 +212,6 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
             )
           })()}
 
-          {/* nodes */}
           {MAIN_FLOW.map((id, i) => {
             const { x, y } = pos[i]
             const selfIdx = i
@@ -229,7 +237,6 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
             )
           })}
 
-          {/* center caption */}
           <text
             x={CX}
             y={CY + 4}
@@ -244,7 +251,7 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
 
       <div className="border-t border-slate-800 pt-3">
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Interrupt / hold</div>
-        <div role="list" aria-label="Autonomy branch states" className="flex flex-wrap items-center gap-2">
+        <div role="list" aria-label="Mission branch states" className="flex flex-wrap items-center gap-2">
           {BRANCH_STATES.map((id) => (
             <BranchPill key={id} id={id} current={current} />
           ))}
@@ -252,11 +259,8 @@ export function AutonomyStateMachineChart({ current }: { current: MissionState }
       </div>
 
       <p className="text-[11px] leading-relaxed text-slate-500">
-        Shadow supervisor on the robot today primarily uses{' '}
-        <span className="font-mono text-slate-400">HEALTH_CHECK</span>,{' '}
-        <span className="font-mono text-slate-400">WAIT_FOR_ZONE_MARKS</span>,{' '}
-        <span className="font-mono text-slate-400">PAUSED</span>, and{' '}
-        <span className="font-mono text-slate-400">ESTOP</span>. Other nodes show the target mission architecture.
+        This chart is the <span className="text-slate-300">target excavation mission</span> (idle → health → zones → navigate → dig/dump → return). Wire it in
+        mission_exec when autonomous dig/dump is implemented; <span className="text-slate-300">Nav autonomy</span> (beside this panel) tracks readiness from /autonomy/state.
       </p>
     </div>
   )

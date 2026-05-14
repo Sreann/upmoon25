@@ -5,7 +5,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 
 from backend.autonomy_shadow_logic import compute_shadow_tick, parse_autonomy_command
 
@@ -15,9 +15,11 @@ class AutonomySupervisor(Node):
     Shadow-mode mission supervisor for field bring-up.
 
     It consumes perception/localization/planning readiness signals and publishes
-    a mission state. It intentionally does not command autonomous motion yet.
-    That keeps the next field test focused on proving sensors and readiness
-    before enabling drive control.
+    a mission state. Autonomous drive remains off unless ``allow_motion`` is true.
+
+    Optional: when ``forward_navigation_twist`` is true and ``allow_motion`` is true
+    and state is ``NAV_ACTIVE``, forwards ``/autonomy/navigation_twist`` to ``cmd/velocity``
+    at 20 Hz (do not enable while human teleop uses the same topic).
     """
 
     def __init__(self):
@@ -26,9 +28,10 @@ class AutonomySupervisor(Node):
         self.declare_parameter("health_timeout_sec", 2.0)
         self.declare_parameter("terrain_timeout_sec", 2.0)
         self.declare_parameter("flag_timeout_sec", 2.0)
+        self.declare_parameter("forward_navigation_twist", False)
 
         self.mode = "Manual"
-        self.state = "HEALTH_CHECK"
+        self.state = "PERCEPTION_FAULT"
         self._last_published_state = self.state
         self.stop_reason = "Waiting for autonomy health signals."
         self.last_decision = "Shadow supervisor started."
@@ -47,6 +50,7 @@ class AutonomySupervisor(Node):
         self.last_flag_time = None
         self.paused = False
         self.estop = False
+        self.navigation_active = False
 
         self.create_subscription(String, "/cmd/autonomy", self._cmd_cb, 10)
         self.create_subscription(String, "/autonomy/perception_health", self._perception_cb, 10)
@@ -54,10 +58,15 @@ class AutonomySupervisor(Node):
         self.create_subscription(String, "/perception/flag_candidates", self._flags_cb, 10)
         self.create_subscription(String, "/autonomy/zone_mark", self._zone_cb, 10)
         self.create_subscription(Odometry, "/odom", self._odom_cb, 10)
+        self.create_subscription(Bool, "/autonomy/navigation_active", self._navigation_active_cb, 10)
+
+        self._last_nav_twist = Twist()
+        self.create_subscription(Twist, "/autonomy/navigation_twist", self._nav_twist_cb, 10)
 
         self.pub_state = self.create_publisher(String, "/autonomy/state", 10)
         self.pub_velocity = self.create_publisher(Twist, "cmd/velocity", 10)
         self.create_timer(0.5, self._tick)
+        self.create_timer(0.05, self._forward_tick)
         self.get_logger().info("Autonomy supervisor initialized in shadow mode")
 
     def _cmd_cb(self, msg):
@@ -91,6 +100,25 @@ class AutonomySupervisor(Node):
         self.odom = msg
         self.last_odom_time = time.monotonic()
 
+    def _nav_twist_cb(self, msg):
+        self._last_nav_twist = msg
+
+    def _navigation_active_cb(self, msg: Bool):
+        self.navigation_active = bool(msg.data)
+
+    def _forward_tick(self):
+        if not bool(self.get_parameter("forward_navigation_twist").value):
+            return
+        if self.estop or self.paused:
+            self.pub_velocity.publish(Twist())
+            return
+        if not bool(self.get_parameter("allow_motion").value):
+            return
+        if self.state != "NAV_ACTIVE":
+            self.pub_velocity.publish(Twist())
+            return
+        self.pub_velocity.publish(self._last_nav_twist)
+
     def _parse_json(self, data):
         try:
             return json.loads(data)
@@ -121,6 +149,7 @@ class AutonomySupervisor(Node):
             health_timeout_sec=float(self.get_parameter("health_timeout_sec").value),
             terrain_timeout_sec=float(self.get_parameter("terrain_timeout_sec").value),
             flag_timeout_sec=float(self.get_parameter("flag_timeout_sec").value),
+            navigation_active=self.navigation_active,
         )
         self.confidence = out["confidence"]
         self.state = out["state"]
