@@ -377,6 +377,12 @@ def _render_command_sensors():
     e1, e2 = st.columns(2)
     e1.metric("Encoder Left", f"{int(state.encoder_left)}")
     e2.metric("Encoder Right", f"{int(state.encoder_right)}")
+    st.caption(
+        "Encoder debug "
+        f"| pin(R/L)=({int(state.encoder_pin_right)},{int(state.encoder_pin_left)}) "
+        f"| dec(R/L)=({int(state.encoder_dec_right)},{int(state.encoder_dec_left)}) "
+        f"| bad(R/L)=({int(state.encoder_bad_right)},{int(state.encoder_bad_left)})"
+    )
 
 
 @_fragment(run_every=UI_REFRESH_SEC)

@@ -71,6 +71,12 @@ class RobotState:
     ir_right: int = 0
     encoder_left: int = 0
     encoder_right: int = 0
+    encoder_pin_right: int = 0
+    encoder_pin_left: int = 0
+    encoder_dec_right: int = 0
+    encoder_dec_left: int = 0
+    encoder_bad_right: int = 0
+    encoder_bad_left: int = 0
     
     # Hardware Status
     node_health: Dict[str, str] = field(default_factory=dict)
