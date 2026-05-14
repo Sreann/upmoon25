@@ -22,7 +22,7 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2
-from std_msgs.msg import Float32, Int16, Int32, String
+from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray, String
 
 from lunar.dashboard.state import store
 from lunar.keyboard_topics import clamp_pan_angle
@@ -220,6 +220,9 @@ class DashboardBridge(Node):
         self.create_subscription(Int16, "/sensor/ir/right", self.ir_right_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/left", self.encoder_left_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/right", self.encoder_right_cb, 10)
+        self.create_subscription(
+            Int32MultiArray, "/sensor/encoder/telemetry", self.encoder_telemetry_cb, 10
+        )
 
         # Publishers
         self.pub_velocity = self.create_publisher(Twist, "cmd/velocity", 10)
@@ -325,6 +328,19 @@ class DashboardBridge(Node):
 
     def encoder_right_cb(self, msg):
         store.update(encoder_right=int(msg.data))
+
+    def encoder_telemetry_cb(self, msg):
+        data = [int(v) for v in msg.data]
+        if len(data) < 6:
+            return
+        store.update(
+            encoder_pin_right=data[0],
+            encoder_pin_left=data[1],
+            encoder_dec_right=data[2],
+            encoder_dec_left=data[3],
+            encoder_bad_right=data[4],
+            encoder_bad_left=data[5],
+        )
 
     def pan_feedback_cb(self, msg):
         store.update(camera_pan=int(msg.data))
