@@ -19,10 +19,15 @@ TEST_FILES = [
     ROOT / "src" / "backend" / "test" / "test_terrain_grid_math.py",
     ROOT / "src" / "backend" / "test" / "test_flag_detection_math.py",
     ROOT / "src" / "backend" / "test" / "test_keyboard_trusted_paths.py",
+    ROOT / "src" / "backend" / "test" / "test_global_mapper_tf.py",
+    ROOT / "src" / "backend" / "test" / "test_navigation_controller_pure.py",
+    ROOT / "src" / "backend" / "test" / "test_occupancy_grid_codec.py",
     ROOT / "src" / "backend" / "test" / "test_mission_bridge_contract.py",
     ROOT / "src" / "backend" / "test" / "test_autonomy_shadow_logic.py",
     ROOT / "src" / "backend" / "test" / "test_autonomy_topic_contracts.py",
+    ROOT / "src" / "backend" / "test" / "test_nav_mission_pure.py",
     ROOT / "src" / "backend" / "test" / "test_encoder_drive_sequence.py",
+    ROOT / "src" / "backend" / "test" / "test_dig_sequence_terrain_pure.py",
 ]
 
 

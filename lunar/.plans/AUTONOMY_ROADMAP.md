@@ -2,11 +2,40 @@
 
 This is the primary roadmap for taking the current robot from manual/dashboard operation to supervised autonomous excavation. It should be treated as the reference plan during field work, implementation, and testing.
 
+## Authoritative planning decisions
+
+These decisions are fixed until a deliberate team review changes them.
+
+1. **Primary path to first autonomous motion**: layered **custom** software on the existing ROS command surface (`cmd/velocity` and the mining/actuator topics). **Local terrain grid + conservative short segments + explicit stop when the grid or pose is stale or low-confidence** comes before any long global path.
+
+2. **Nav2**: **Out of scope for the current competition cycle.** Nav2 is the standard ROS 2 navigation stack (a family of ROS packages, plugins, and nodes—not a single importable library). Do **not** budget parallel Nav2 integration and tuning work while the critical path is unproven. Revisit Nav2 only in a **later phase**, after a **supervised autonomous dig/dump cycle** works on hardware **and** map-frame localization is trustworthy **with** calendar time reserved for full-stack integration and tuning.
+
+3. **Global map pipeline** (`global_mapper`, `global_costmapper`, `path_planner`, `motion_controller`): keep it correct and testable for **simulation, RViz/Foxglove, and eventual zone-to-zone planning** when `map`↔robot TF and odometry are proven on hardware. It is **not** the gate for the first safe autonomous moves in the field. `nav_msgs/OccupancyGrid` layout is shared across mapper, costmapper, and planner via `src/backend/backend/occupancy_grid_codec.py`.
+
+4. **Supervisor and upcoming controllers**: `autonomy_supervisor` remains the top-level **readiness, pause/estop contract, and `/autonomy/state` publisher** for the dashboard and bridge. Implement **navigation behavior** (short moves from the local grid plus target bearing or marked zones) and the **mission state machine** as explicit layers (separate ROS nodes or clearly separated modules), still subject to health gates and operator authority.
+
+5. **Non-negotiables**: single drive authority at a time; field checklist in `FIELD_READINESS_AUDIT.md` before autonomous tests; rosbags on meaningful runs; dashboard-visible confidence, freshness, and stop reasons.
+
+## Focus areas checklist
+
+Cross-functional backlog. Order work inside each group by dependency (safety and sensors before autonomous motion).
+
+- **Safety and operations**: Physical and software estop; pause and manual takeover; stop during payload motion; watchdog so a crashed node cannot leave a stale non-zero `cmd/velocity`; who may arm autonomy; restrained/slow tests first.
+- **Sensors and time**: RGB exposure/latency; depth topic existence, rate, `frame_id`, point counts, valid fraction; sensible timestamps; rosbag policy (topics listed in section 11).
+- **TF and frames**: Correct static transforms; `depth_link_optical` → `base_link`; know who publishes `odom` and `map` and whether they are usable for each mode.
+- **Localization**: One honest pose story per mode; stationary drift and turn slip; do not consume pose silently when invalid; fix or fuse wheel encoders only after raw signals make sense.
+- **Local terrain grid (highest leverage for first autonomy)**: Spatial correctness while driving and rotating; obstacle vs unknown vs pothole; inflation; **autonomy must stop or slow when the grid is stale** (`FIELD_READINESS_AUDIT.md` obstacle-aware gates).
+- **Global map (secondary until pose is good)**: Mapper and costmap as lab tools; global path following only after map-frame pose is credible.
+- **Planning and control**: Behavior-first (clear forward, bias, stop, rotate-in-place search); rate limits on twists; no NaN paths. Long-horizon planners (bespoke global path or Nav2-class) only after the layers above are green.
+- **Mission and product**: Explicit FSM states and transitions; zone marks; timed dig/dump macros with abort; published target, confidence, and stop reason on every tick where applicable.
+- **Dashboard and bridge**: Live panels for health, grid, flags, mission state; ship only bridge commands that are tested; RViz/Foxglove remain developer tools for TF and clouds.
+- **Software quality**: Offline tests for pure math, codecs, and JSON contracts; venue presets (grid presets already exist via `lunar autonomy-stack --grid-preset`).
+
 **Stack note:** Intel RealSense T265 is deprecated; localization work should assume `/odom` from wheel encoders, SLAM, or another chosen stack, not a tracking camera.
 
 ## Progress Ledger
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 We can definitively mark progress on the operator dashboard and bridge foundation. We cannot yet mark autonomous navigation, SLAM, terrain avoidance, flag detection, or full dig/dump autonomy as complete because those still require real robot validation and implementation.
 
@@ -31,6 +60,7 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
   - `backend local_terrain_grid`
   - `backend flag_detector`
   - `backend autonomy_supervisor`
+  - `backend navigation_controller`
 - `lunar autonomy-stack` / `make autonomy-stack` launch path added for the shadow stack.
 - Mission bridge now consumes `/autonomy/state`, `/autonomy/terrain_status`, and `/perception/flag_candidates`.
 - Mission bridge now consumes `/autonomy/local_terrain_grid` and forwards compact grid cells to the dashboard snapshot.
@@ -49,6 +79,12 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
   - CLI subsystem parsing.
   - Mission bridge snapshot contract and terrain-grid forwarding.
 - `make test-offline` added for hardware-free regression checks.
+- Global occupancy **software** path hardened and aligned: `backend/occupancy_grid_codec.py`; `global_mapper`, `global_costmapper`, and `path_planner` use the same `nav_msgs/OccupancyGrid` row-major semantics; offline tests (`test_occupancy_grid_codec.py`, `test_global_mapper_tf.py`). **Hardware validation** of mapping and path following is still open.
+- **Short-segment navigation (software v1)**: `backend/navigation_controller_pure.py` + `backend/navigation_controller.py` — three-band corridor scoring on the local terrain `OccupancyGrid`, scaled twists, JSON `/autonomy/navigation_status`, proposed `Twist` on `/autonomy/navigation_twist` gated by `/autonomy/navigation_active`, fresh terrain status, non-stale grid, and `/autonomy/state` (estop/pause). Offline tests in `test_navigation_controller_pure.py`.
+- **Navigation v1.1**: optional **flag-bearing** blend from `/perception/flag_candidates` (confidence-gated); `navigation_status` may include `bearing_deg` / `bearing_confidence`.
+- **Mission bridge**: publishes `/autonomy/navigation_active`; dashboard command `set_navigation_active` with `{ "type": "set_navigation_active", "active": true|false }`; clears topic on ESTOP/pause/manual/drive-stop; snapshot field `mission.navigationActive`.
+- **Supervisor integration**: `compute_shadow_tick` now reaches **`READY`** when health + odom + terrain + dig/dump zones are satisfied; optional `forward_navigation_twist` + `allow_motion` forwards `/autonomy/navigation_twist` → `cmd/velocity` at 20 Hz when state is `READY` (never combine with human teleop on the same topic).
+- **`lunar autonomy-stack`**: `--nav-controller` / `--no-nav-controller` (default: start `navigation_controller` with `claim_cmd_vel:=false`).
 
 ### In Progress
 
@@ -60,6 +96,7 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
 - Shadow-mode perception readiness and autonomy supervisor validation.
 - Local point-cloud-to-grid validation against real TF and D435 data.
 - HSV red/orange flag detector field tuning.
+- **`navigation_controller` next**: odom/zone waypoint pursuit, field tuning of `v_max` / `w_max`, hardware prove-out. *(Flag bearing + bridge `navigation_active` command are in.)*
 
 ### Not Completed Yet
 
@@ -75,12 +112,16 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
 
 ### Rough Roadmap Completion
 
-- Mission-control dashboard surface: about 70% complete.
-- Frontend/live bridge contract: about 60% complete.
-- Safe command bridge foundation: about 35% complete.
-- Field readiness documentation: about 80% complete.
-- Perception, SLAM, planning, and autonomy execution: about 25% complete.
-- End-to-end autonomous excavation: 0% complete until demonstrated on hardware.
+Percentages are **engineering estimates** against the full roadmap end state (§15), not “competition readiness.”
+
+- Mission-control dashboard surface: about **72%** complete.
+- Frontend/live bridge contract: about **62%** complete.
+- Safe command bridge foundation: about **36%** complete.
+- Field readiness documentation: about **80%** complete.
+- Perception, SLAM, planning, and autonomy execution: about **34%** complete (local grid + corridor nav + flag-bearing blend + bridge nav gate in software; hardware proof, zone pursuit, macros, watchdog still open).
+- End-to-end autonomous excavation: **0%** complete until demonstrated on hardware.
+
+**Aggregate “through the written plan” (code + docs vs field-proven autonomy): about 40%.** §12 Priorities 1–3 (confirm depth/odom/TF, dashboard perception, assisted short-segment nav) are **roughly half done in software**, **still low on hardware validation** for closed-loop motion.
 
 ## 1. Target End State
 
@@ -136,8 +177,8 @@ The target architecture is layered, not monolithic:
 - TF correctness is unknown.
 - Point cloud alignment is unknown.
 - `global_mapper` real-hardware usefulness is unknown.
-- `path_planner` and `motion_controller` hardware usefulness is unknown.
-- Nav2 usage status is unclear.
+- `path_planner` and `motion_controller` hardware usefulness is unknown (sim-first; **not** on the critical path until **Authoritative planning decisions** milestones advance).
+- **Nav2 is not in scope this cycle** (see **Authoritative planning decisions** at the top of this document); it is not an unknown—it is a **deferred** integration choice.
 - Exolith lab dimensions and exact task layout are not yet known.
 - Autonomy stack is mostly not implemented or not trusted.
 
@@ -373,12 +414,13 @@ Possible pose sources in priority order:
 
 Do not choose a SLAM system by preference. Choose by field test.
 
-Evaluate:
+Evaluate (field test, not preference):
 
-- Existing `global_mapper`
-- Nav2 costmaps
-- RTAB-Map or another RGB-D SLAM approach if feasible
-- Simple local mapping without global SLAM
+- Existing `global_mapper` (2.5D stamping; needs solid `map` ← sensor TF).
+- RTAB-Map or another RGB-D SLAM approach if feasible.
+- Simple local mapping without global SLAM.
+
+**Nav2** is **not** in this evaluation set for the current cycle (**Authoritative planning decisions**). If the team later adopts Nav2, it replaces large parts of custom planning/costmap—not an add-on afternoon task.
 
 Selection criteria:
 
@@ -434,8 +476,8 @@ Basic behavior:
 If SLAM/global map becomes usable:
 
 - Use marked/detected zones as goals.
-- Use global obstacle map for route planning.
-- Use local terrain grid as the final safety layer.
+- Use global obstacle map for route planning (including optional use of `path_planner` / `motion_controller` or a future Nav2 stack if the team formally reopens that decision in **Authoritative planning decisions**).
+- Use local terrain grid as the **final safety layer**.
 
 Even with global planning, local hazard avoidance must remain active.
 
@@ -617,6 +659,7 @@ Examples:
 - Test T265 stability.
 - Test wheel encoder correction.
 - Decide whether to integrate a SLAM package or use simpler local mapping for the competition.
+- **Nav2 remains out of scope this cycle**; do not fold Nav2 bring-up into this priority. Revisit only after **Authoritative planning decisions** milestones are met and time is budgeted.
 
 ### Priority 5: Full Cycle
 
@@ -634,7 +677,7 @@ Avoid spending the first critical days on:
 - Full 3D point cloud dashboard visualization.
 - Complex neural perception before simple color segmentation baseline.
 - Perfect global SLAM before local obstacle avoidance works.
-- Fully custom planners before short-segment navigation works.
+- Nav2 integration or reliance on full global path following before short-segment local navigation works.
 - Fancy UI polish before dashboard confidence and stop reasons exist.
 
 These can come later, but they should not block the first reliable autonomous cycle.
@@ -676,6 +719,10 @@ Use SLAM pose/map for zone-to-zone navigation.
 ### If SLAM Is Weak
 
 Use marked zones and local terrain avoidance for the competition path.
+
+### Nav2 vs custom stack (this cycle)
+
+**Decision already recorded under Authoritative planning decisions:** custom layered stack and local-first navigation; **Nav2 deferred**. Do not spend sprint time on Nav2 bring-up until the first supervised autonomous dig/dump milestone is met without it.
 
 ## 15. Final System Definition
 

@@ -9,7 +9,10 @@ export type RobotBridge = {
 export class MockRobotBridge implements RobotBridge {
   private scenario: DemoScenario
   private readonly onMarkUpdate?: () => void
-  private readonly zonePatches: Partial<Record<FieldZone['id'], Pick<FieldZone, 'status' | 'detail'>>> = {}
+  private readonly zonePatches: Partial<
+    Record<FieldZone['id'], Pick<FieldZone, 'status' | 'detail' | 'odom_x' | 'odom_y'>>
+  > = {}
+  private navigationActive = false
 
   constructor(scenario: DemoScenario = 'degraded', onMarkUpdate?: () => void) {
     this.scenario = scenario
@@ -23,7 +26,11 @@ export class MockRobotBridge implements RobotBridge {
   getSnapshot(): MissionControlSnapshot {
     const base = createMockSnapshot(this.scenario)
     const zones = base.zones.map((z) => ({ ...z, ...(this.zonePatches[z.id] ?? {}) }))
-    return { ...base, zones }
+    return {
+      ...base,
+      zones,
+      mission: { ...base.mission, navigationActive: this.navigationActive },
+    }
   }
 
   async sendCommand(command: RobotCommand): Promise<CommandResult> {
@@ -34,14 +41,37 @@ export class MockRobotBridge implements RobotBridge {
       }
     }
 
+    if (command.type === 'set_navigation_active') {
+      this.navigationActive = command.active
+      this.onMarkUpdate?.()
+      return {
+        accepted: true,
+        message: `navigation_active = ${command.active} (mock).`,
+        commandId: crypto.randomUUID(),
+      }
+    }
+
     if (command.type === 'mark_zone') {
       const zone = command.zone
       const pick = command.pick
+      const snap = createMockSnapshot(this.scenario)
+      const zm = snap.zoneMarking
+      let odom_x: number | undefined
+      let odom_y: number | undefined
+      if (pick && zm) {
+        const yawDeg = zm.yawDeg ?? 0
+        const yaw = (yawDeg * Math.PI) / 180
+        const lx = pick.x
+        const ly = pick.y
+        odom_x = zm.x + Math.cos(yaw) * lx - Math.sin(yaw) * ly
+        odom_y = zm.y + Math.sin(yaw) * lx + Math.cos(yaw) * ly
+      }
       this.zonePatches[zone] = {
         status: 'operator_marked',
         detail: pick
           ? `odom (mock) ← base_link (${pick.x.toFixed(2)},${pick.y.toFixed(2)})`
           : 'operator marked (mock)',
+        ...(odom_x !== undefined ? { odom_x, odom_y } : {}),
       }
       this.onMarkUpdate?.()
       return {

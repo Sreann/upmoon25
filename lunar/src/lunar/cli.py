@@ -22,6 +22,7 @@ import serial.tools.list_ports
 from .config import Config, CONFIG_PATH, find_repo_root
 from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
 from .process import spawn, save_state, kill_all
+from .run_session import append_process_banner, bag_record_command, create_run_session, write_run_meta
 
 app = typer.Typer(add_completion=False)
 ARDUINO_PAN_PIN = 3
@@ -31,11 +32,49 @@ ARDUINO_CONVEYOR_PIN = 7
 
 
 class RunProfile(str, Enum):
+    """Execution profiles for ``lunar run`` (robot / nav / dig are the primary autonomy split)."""
+
     ROBOT = "robot"
     RC = "rc"
     AUTONOMY = "autonomy"
+    NAV = "nav"
+    NAV_DIG = "nav-dig"
     TEST_ENCODER = "test-encoder"
     DIG = "dig"
+
+
+def _short_segment_nav_stack_commands(
+    *,
+    grid_preset: str,
+    include_navigation_controller: bool,
+    include_nav_mission: bool = False,
+) -> list[tuple[str, str]]:
+    """
+    ROS processes for navigation autonomy bring-up (field / sim).
+
+    Perception health, local terrain grid, flag hints, shadow supervisor, optional
+    ``navigation_controller`` (zone goal → dig when zones are marked), and optional
+    ``nav_mission_executor`` (MAP_EXPLORE → … → handoff publishes ``/autonomy/dig_arm``).
+    """
+    preset = str(grid_preset).strip().lower() or "standard"
+    cmds: list[tuple[str, str]] = [
+        ("perception_health", "ros2 run backend perception_health"),
+        ("local_terrain_grid", f"ros2 run backend local_terrain_grid --ros-args -p grid_preset:={shlex.quote(preset)}"),
+        ("flag_detector", "ros2 run backend flag_detector"),
+        ("autonomy_supervisor", "ros2 run backend autonomy_supervisor --ros-args -p allow_motion:=false"),
+    ]
+    if include_navigation_controller:
+        cmds.append(
+            (
+                "navigation_controller",
+                "ros2 run backend navigation_controller --ros-args "
+                "-p claim_cmd_vel:=false "
+                "-p use_zone_goal:=true -p zone_goal_id:=dig -p goal_preference:=zone",
+            )
+        )
+    if include_nav_mission:
+        cmds.append(("nav_mission_executor", "ros2 run backend nav_mission_executor"))
+    return cmds
 
 
 class ControlTarget(str, Enum):
@@ -892,35 +931,63 @@ def run(
     profile: RunProfile = typer.Argument(
         ...,
         help=(
-            "The execution profile:\n\n"
-            "- robot: Frontend drivers on the Jetson/comp stack.\n"
-            "- rc: Joystick / RViz (and optional rosbag).\n"
+            "Primary profiles (bring-up story):\n\n"
+            "- robot: Manual stack — frontend drivers (teleop / sensors).\n"
+            "- nav: Navigation autonomy — terrain + supervisor + corridor controller + "
+            "start→dig mission executor (publish /autonomy/nav_mission/command start after marking dig zone).\n"
+            "- nav-dig: Same as nav, plus dig_sequence in the background waiting on /autonomy/dig_arm "
+            "(nav profile transitions into dig when the mission reaches dig handoff). "
+            "Requires --calibrated-rotary.\n"
+            "- dig: Dig autonomy alone — foreground dig_sequence (use after robot is up; "
+            "for nav→dig use nav-dig instead).\n\n"
+            "Other profiles:\n"
+            "- rc: Joystick / RViz (optional --record).\n"
             "- autonomy: Planner / transport / command stack.\n"
-            "- test-encoder: Drive + Arduino, 5s forward / 5s backward encoder test, then exit.\n"
-            "- dig: Foreground autonomous dig cycle (needs robot drivers; use --calibrated-rotary)."
+            "- test-encoder: Drive + Arduino encoder exercise, then exit."
         ),
     ),
     record: bool = typer.Option(False, "--record", help="Start a rosbag recording of odom and camera data (RC profile only)."),
+    session_bag: bool = typer.Option(
+        True,
+        "--session-bag/--no-session-bag",
+        help="Write a curated ros2 bag under `.lunar/runs/<session>/rosbag/` (nav / robot / nav-dig / …). "
+        "Disable for long robot-only sessions or when disk space is tight.",
+    ),
+    session_bag_depth: bool = typer.Option(
+        False,
+        "--session-bag-depth/--no-session-bag-depth",
+        help="Include `/camera/depth/points` in the session bag (large). Default bag omits raw depth.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be run for this profile."),
     calibrated_rotary: Optional[int] = typer.Option(
         None,
         "--calibrated-rotary",
-        help="dig profile only: Wheel encoder ticks to reach on each forward phase (positive target).",
+        help="dig / nav-dig: Wheel encoder ticks for dig_sequence forward phase (positive target).",
     ),
     encoder_side: str = typer.Option(
         "left",
         "--encoder-side",
-        help="dig profile only: Subscribe to /sensor/encoder/left or right.",
+        help="dig / nav-dig: Subscribe to /sensor/encoder/left or right.",
+    ),
+    grid_preset: str = typer.Option(
+        "standard",
+        "--grid-preset",
+        help="nav profile only: Terrain grid preset — coarse, standard, or fine.",
     ),
 ):
     """
-    Execute high-level system profiles for Robot, RC, Autonomy, test-encoder, or Dig.
+    Execute high-level system profiles.
 
-    robot/rc/autonomy/test-encoder run ROS nodes in the background (see 'lunar kill').
-    dig runs the calibrated dig_sequence node in the foreground until it finishes or you Ctrl-C.
+    **robot**, **nav**, and **nav-dig** (plus rc / autonomy / test-encoder) run ROS nodes in the
+    background until `lunar kill`. **dig** runs `dig_sequence` in the foreground. Use **nav-dig**
+    when you want the navigation autonomy profile to hand off into the dig profile via
+    `/autonomy/dig_arm` at the dig zone.
+
+    Each background ``lunar run`` creates a timestamped folder under ``.lunar/runs/`` with
+    ``combined.log`` (all spawned process output), ``RUN_META.txt``, optional ``rosbag/``
+    (``--session-bag``), and ``README.txt``. ``.lunar/runs/latest`` symlinks to the newest session.
     """
     root = find_repo_root()
-    log_path = root / ".lunar" / f"run_{profile.value}.log"
     
     cmds = []
     if profile == RunProfile.ROBOT:
@@ -936,6 +1003,45 @@ def run(
         cmds.append(("rviz", "rviz2"))
         cmds.append(("transport", "ros2 run backend rgb_transport"))
         cmds.append(("controller", "ros2 run backend main_controller"))
+
+    elif profile == RunProfile.NAV:
+        cmds.extend(
+            _short_segment_nav_stack_commands(
+                grid_preset=grid_preset,
+                include_navigation_controller=True,
+                include_nav_mission=True,
+            )
+        )
+
+    elif profile == RunProfile.NAV_DIG:
+        if calibrated_rotary is None or calibrated_rotary <= 0:
+            typer.secho(
+                "Profile 'nav-dig' requires --calibrated-rotary <positive_ticks> "
+                "(dig_sequence forward phase; same as standalone dig profile).",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        side = encoder_side.strip().lower()
+        if side not in ("left", "right"):
+            typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
+            raise typer.Exit(code=2)
+        cmds.extend(
+            _short_segment_nav_stack_commands(
+                grid_preset=grid_preset,
+                include_navigation_controller=True,
+                include_nav_mission=True,
+            )
+        )
+        cmds.append(
+            (
+                "dig_sequence",
+                "ros2 run backend dig_sequence --ros-args "
+                "-p wait_for_nav_dig_arm:=true "
+                f"-p calibrated_rotary:={int(calibrated_rotary)} "
+                f"-p encoder_side:={shlex.quote(side)}",
+            )
+        )
 
     elif profile == RunProfile.TEST_ENCODER:
         cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
@@ -977,8 +1083,19 @@ def run(
         return
 
     if dry_run:
+        bag_preview = ""
+        if session_bag and cmds:
+            bag_preview = bag_record_command(
+                root,
+                root / ".lunar" / "runs" / "(dry-run)",
+                _ros_source_env_chain(root),
+                profile.value,
+                include_depth=session_bag_depth,
+            )
         for name, cmd in cmds:
             typer.echo(f"[{name}] {cmd}")
+        if bag_preview:
+            typer.echo(f"[session_rosbag] {bag_preview}")
         return
 
     typer.echo("Stopping existing lunar/ROS processes...")
@@ -987,18 +1104,44 @@ def run(
         typer.echo(msg)
     time.sleep(0.5)
 
-    log_path.parent.mkdir(exist_ok=True)
-    log_path.write_text(f"--- Profile {profile.value} started at {time.ctime()} ---\n")
+    ensure_env()
+    session_dir, combined_log = create_run_session(root, profile.value)
+    launch_cmds: list[tuple[str, str]] = list(cmds)
+    if session_bag and launch_cmds:
+        launch_cmds.append(
+            (
+                "session_rosbag",
+                bag_record_command(
+                    root,
+                    session_dir,
+                    _ros_source_env_chain(root),
+                    profile.value,
+                    include_depth=session_bag_depth,
+                ),
+            )
+        )
+    write_run_meta(
+        session_dir,
+        root,
+        profile=profile.value,
+        commands=launch_cmds,
+        session_bag=bool(session_bag and launch_cmds),
+        session_bag_depth=session_bag_depth,
+    )
 
     procs = []
-    for name, cmd in cmds:
+    for name, cmd in launch_cmds:
         typer.echo(f"Starting {name}...")
-        procs.append(spawn(name, cmd, log_file=log_path))
+        append_process_banner(combined_log, name, cmd)
+        procs.append(spawn(name, cmd, log_file=combined_log))
         time.sleep(0.5)
 
     save_state(procs)
     typer.echo(f"Profile {profile.value} running in background.")
-    typer.echo(f"Logs: {log_path}")
+    typer.echo(f"Session folder: {session_dir}")
+    typer.echo(f"Combined log: {combined_log}")
+    if session_bag and cmds:
+        typer.echo(f"Rosbag output: {session_dir / 'rosbag'} (curated topics; add --session-bag-depth for point cloud)")
     typer.echo("Run 'lunar kill' to stop.")
 
 
@@ -1994,23 +2137,33 @@ def autonomy_stack(
     grid_preset: str = typer.Option("standard", "--grid-preset", help="Terrain grid preset: coarse, standard, or fine."),
     foreground: bool = typer.Option(False, "--foreground", help="Print startup status but keep nodes tracked in the background."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the commands that would be launched."),
+    navigation_controller: bool = typer.Option(
+        True,
+        "--nav-controller/--no-nav-controller",
+        help="Also start navigation_controller (publishes /autonomy/navigation_twist when gated).",
+    ),
+    nav_mission: bool = typer.Option(
+        False,
+        "--nav-mission/--no-nav-mission",
+        help="Also start nav_mission_executor (start→dig mission; use `lunar run nav` for the full nav profile).",
+    ),
 ):
     """
     Launch the shadow-mode perception and autonomy stack.
 
-    This starts perception health, local terrain grid, flag detection, and the
-    autonomy supervisor. The supervisor runs with autonomous motion disabled.
+    This starts perception health, local terrain grid, flag detection, the
+    autonomy supervisor (motion disabled by default), and optionally the
+    short-segment navigation_controller and nav_mission_executor.
     """
     root = find_repo_root()
     log_path = root / ".lunar" / "autonomy_stack.log"
     ensure_env(force=True)
 
-    cmds = [
-        ("perception_health", "ros2 run backend perception_health"),
-        ("local_terrain_grid", f"ros2 run backend local_terrain_grid --ros-args -p grid_preset:={shlex.quote(grid_preset)}"),
-        ("flag_detector", "ros2 run backend flag_detector"),
-        ("autonomy_supervisor", "ros2 run backend autonomy_supervisor --ros-args -p allow_motion:=false"),
-    ]
+    cmds = _short_segment_nav_stack_commands(
+        grid_preset=grid_preset,
+        include_navigation_controller=navigation_controller,
+        include_nav_mission=nav_mission,
+    )
 
     if dry_run:
         for name, cmd in cmds:

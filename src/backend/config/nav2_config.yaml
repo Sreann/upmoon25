@@ -116,7 +116,7 @@ global_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.24
+        inflation_radius: 1.0
 
 local_costmap:
   local_costmap:
@@ -130,7 +130,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.033333
-      robot_radius: 0.24
+      robot_radius: 0.796242
 
       plugins: ["obstacle_layer", "inflation_layer"]
 
@@ -149,7 +149,7 @@ local_costmap:
 
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.5
+        inflation_radius: 1.0
 
 map_saver:
   ros__parameters:

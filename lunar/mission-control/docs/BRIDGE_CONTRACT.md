@@ -211,5 +211,6 @@ The frontend includes `MockRobotBridge` with scenarios:
 - `nominal`
 - `degraded`
 - `offline`
+- `terrain_lab` (large synthetic local terrain cells for UI validation)
 
 Use these scenarios to develop fallback states before the live bridge exists.

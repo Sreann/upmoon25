@@ -47,6 +47,8 @@ setup(
             'local_terrain_grid = backend.local_terrain_grid:main',
             'flag_detector = backend.flag_detector:main',
             'autonomy_supervisor = backend.autonomy_supervisor:main',
+            'navigation_controller = backend.navigation_controller:main',
+            'nav_mission_executor = backend.nav_mission_executor:main',
         ],
     },
 )

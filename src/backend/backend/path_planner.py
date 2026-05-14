@@ -13,6 +13,8 @@ from tf2_ros import TransformException
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
+from backend.occupancy_grid_codec import decode_ros_data_to_cell_grid_xy
+
 
 '''
     Plots optimal paths to a given goal pose using A* and a basic path 
@@ -119,7 +121,7 @@ class PathPlanner(Node):
 
     def worldToMap(self, point):
         x = int(point[0] / self.costmap_res) + self.costmap_x // 2
-        y = int(point[1] / self.costmap_res) + self.costmap_x // 2
+        y = int(point[1] / self.costmap_res) + self.costmap_y // 2
         return (x, y)
     
     def mapToWorld(self, point):
@@ -349,11 +351,14 @@ class PathPlanner(Node):
 
     # TODO costmap update function?
     def onCostmap(self, msg):
-        # Store costmap data for future processing
         self.costmap_x = msg.info.width
         self.costmap_y = msg.info.height
         self.costmap_res = float(msg.info.resolution)
-        self.costmap = np.frombuffer(msg.data, dtype=np.int8).reshape((self.costmap_x, self.costmap_y), order='C')
+        try:
+            self.costmap = decode_ros_data_to_cell_grid_xy(msg.data, self.costmap_x, self.costmap_y)
+        except ValueError as exc:
+            self.get_logger().error(f"Invalid costmap message: {exc}")
+            return
 
         if (not self.service_ready):
             self.service_ready = True

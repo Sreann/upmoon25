@@ -12,6 +12,7 @@ import {
   Database,
   Flag,
   Gauge,
+  GitBranch,
   Home,
   MapPinned,
   Pause,
@@ -34,12 +35,16 @@ import type {
   HealthStatus,
   Metric,
   MissionControlSnapshot,
+  RobotCommand,
   StreamStatus,
   TerrainGridSnapshot,
+  ZoneMarkingSnapshot,
 } from './bridge/types'
 import type { DemoScenario } from './bridge/mockSnapshot'
 import { useMissionBridge } from './bridge/useMissionBridge'
-import { AutonomyStateMachineChart } from './components/AutonomyStateMachineChart'
+import { DigDumpMissionChart } from './components/DigDumpMissionChart'
+import { DigSequenceStateChart } from './components/DigSequenceStateChart'
+import { NavAutonomyStateChart } from './components/NavAutonomyStateChart'
 import { ZoneMarkingPanel } from './components/ZoneMarkingPanel'
 import { useCameraFrame } from './hooks/useCameraFrame'
 import { useCameraWsBaseUrl } from './hooks/useCameraWsBaseUrl'
@@ -49,6 +54,19 @@ const scenarioLabels: Record<DemoScenario, string> = {
   nominal: 'Nominal',
   degraded: 'Degraded',
   offline: 'Offline',
+  terrain_lab: 'Terrain lab',
+}
+
+function isNominalLikeScenario(s: DemoScenario): boolean {
+  return s === 'nominal' || s === 'terrain_lab'
+}
+
+function initialDemoScenario(): DemoScenario {
+  if (typeof window === 'undefined') return 'degraded'
+  const raw = new URLSearchParams(window.location.search).get('scenario')
+  const allowed: DemoScenario[] = ['nominal', 'degraded', 'offline', 'terrain_lab']
+  if (raw && (allowed as readonly string[]).includes(raw)) return raw as DemoScenario
+  return 'degraded'
 }
 
 function statusClass(status: HealthStatus = 'idle') {
@@ -165,6 +183,7 @@ function SafetyBar({
   bridgeMode,
   setBridgeMode,
   liveAvailable,
+  runCommand,
 }: {
   snapshot: MissionControlSnapshot
   scenario: DemoScenario
@@ -172,8 +191,10 @@ function SafetyBar({
   bridgeMode: 'mock' | 'live'
   setBridgeMode: (mode: 'mock' | 'live') => void
   liveAvailable: boolean
+  runCommand: (command: RobotCommand) => Promise<void>
 }) {
   const { mission } = snapshot
+  const navOn = Boolean(mission.navigationActive)
   return (
     <div className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 px-3 py-3 backdrop-blur sm:px-4">
       <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3">
@@ -187,6 +208,24 @@ function SafetyBar({
           <span className={clsx('rounded-full border px-2 py-1', statusClass(mission.estop ? 'bad' : 'ok'))}>E-stop {mission.estop ? 'active' : 'clear'}</span>
           <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1">Mode {mission.mode}</span>
           <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1">State {mission.state}</span>
+          <span
+            className={clsx(
+              'rounded-full border px-2 py-1',
+              statusClass(navOn ? 'warn' : 'idle'),
+            )}
+          >
+            Short nav {navOn ? 'armed' : 'off'}
+          </span>
+          {mission.navMission?.phase ? (
+            <span className="rounded-full border border-violet-800 bg-violet-950/60 px-2 py-1 font-mono text-violet-100">
+              Nav mission {mission.navMission.phase}
+            </span>
+          ) : null}
+          {mission.digSequence?.phase ? (
+            <span className="rounded-full border border-amber-800/80 bg-amber-950/50 px-2 py-1 font-mono text-amber-100">
+              Dig seq {mission.digSequence.phase}
+            </span>
+          ) : null}
           <span className="rounded-full border border-slate-700 bg-slate-900 px-2 py-1">Heartbeat {mission.heartbeatMs === null ? '--' : `${mission.heartbeatMs} ms`}</span>
         </div>
         <select
@@ -212,6 +251,14 @@ function SafetyBar({
           <option value="live" disabled={!liveAvailable}>Live bridge</option>
         </select>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Button
+            intent="safe"
+            disabled={!mission.connected}
+            className="min-w-32"
+            onClick={() => void runCommand({ type: 'set_navigation_active', active: !navOn })}
+          >
+            <Radio className="h-4 w-4" /> Short nav {navOn ? 'off' : 'on'}
+          </Button>
           <Button intent="danger" className="min-w-28">
             <Power className="h-4 w-4" /> ESTOP
           </Button>
@@ -282,11 +329,44 @@ function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string |
 }
 
 const TERRAIN_PIXEL: Record<'ok' | 'warn' | 'bad' | 'unknown' | 'robot', string> = {
-  ok: 'rgba(16, 185, 129, 0.42)',
-  warn: 'rgba(251, 191, 36, 0.78)',
-  bad: 'rgba(239, 68, 68, 0.88)',
-  unknown: 'rgba(51, 65, 85, 0.95)',
-  robot: 'rgba(103, 232, 249, 0.95)',
+  /** Free / traversable */
+  ok: 'rgba(22, 163, 74, 0.92)',
+  /** Uneven / drop-off risk — backend cell value 60 (not free, not a hard obstacle) */
+  warn: 'rgba(234, 179, 8, 0.9)',
+  /** Obstacle (backend ≥90) */
+  bad: 'rgba(185, 28, 28, 0.94)',
+  /** Unknown / not yet classified (backend -1) */
+  unknown: 'rgba(120, 120, 120, 0.92)',
+  /** Robot forward strip */
+  robot: 'rgba(255, 255, 255, 0.96)',
+}
+
+const ZONE_MARKER_RGBA: Record<FieldZone['id'], string> = {
+  start: 'rgba(52, 211, 153, 0.95)',
+  dig: 'rgba(250, 204, 21, 0.98)',
+  dump: 'rgba(249, 115, 22, 0.98)',
+  no_go: 'rgba(220, 38, 38, 0.98)',
+}
+
+function odomToTerrainCell(
+  robotX: number,
+  robotY: number,
+  yawDeg: number,
+  worldX: number,
+  worldY: number,
+  width: number,
+  height: number,
+  resolutionM: number,
+): { ix: number; iy: number } | null {
+  const yaw = (yawDeg * Math.PI) / 180
+  const dx = worldX - robotX
+  const dy = worldY - robotY
+  const lx = Math.cos(yaw) * dx + Math.sin(yaw) * dy
+  const ly = -Math.sin(yaw) * dx + Math.cos(yaw) * dy
+  const widthM = width * resolutionM
+  const iy = Math.min(height - 1, Math.max(0, Math.floor(lx / resolutionM)))
+  const ix = Math.min(width - 1, Math.max(0, Math.floor((ly + widthM / 2) / resolutionM)))
+  return { ix, iy }
 }
 
 function classifyTerrainCell(
@@ -294,9 +374,12 @@ function classifyTerrainCell(
   x: number,
   y: number,
   width: number,
+  height: number,
 ): keyof typeof TERRAIN_PIXEL {
   const centerX = Math.floor(width / 2)
-  if ((x === centerX || x === centerX - 1) && y < 2) return 'robot'
+  const robotRows = Math.max(2, Math.floor(height * 0.012))
+  const halfBand = Math.max(1, Math.floor(width * 0.01))
+  if (y < robotRows && Math.abs(x - centerX) <= halfBand) return 'robot'
   if (cell >= 90) return 'bad'
   if (cell > 0) return 'warn'
   if (cell < 0) return 'unknown'
@@ -308,18 +391,23 @@ function fallbackTerrainCategory(x: number, y: number, w: number, h: number): ke
   const y12 = Math.min(11, Math.floor((y * 12) / h))
   if ((x12 === 5 || x12 === 6) && y12 > 7) return 'robot'
   if ((x12 > 7 && y12 < 4) || (x12 === 2 && y12 === 5) || (x12 === 3 && y12 === 5)) return 'bad'
-  if ((x12 < 3 && y12 < 3) || (x12 > 9 && y12 > 8)) return 'unknown'
+  const cornerR = Math.max(3, Math.round(Math.min(w, h) * 0.04))
+  if ((x < cornerR && y < cornerR) || (x >= w - cornerR && y >= h - cornerR)) return 'unknown'
   if (x12 === 7 && y12 === 6) return 'warn'
   return 'ok'
 }
 
 function TerrainGrid({
   grid,
+  zones,
+  zoneMarking,
   pickArmed,
   pickEnabled,
   onPick,
 }: {
   grid?: TerrainGridSnapshot
+  zones?: FieldZone[]
+  zoneMarking?: ZoneMarkingSnapshot
   pickArmed?: boolean
   pickEnabled?: boolean
   onPick?: (p: { x: number; y: number }) => void
@@ -333,7 +421,7 @@ function TerrainGrid({
       return grid!.cells.map((cell, index) => {
         const x = index % width
         const y = Math.floor(index / width)
-        return classifyTerrainCell(cell, x, y, width)
+        return classifyTerrainCell(cell, x, y, width, height)
       })
     }
     return Array.from({ length: width * height }, (_, index) => {
@@ -343,6 +431,20 @@ function TerrainGrid({
     })
   }, [grid, hasLiveCells, height, width])
 
+  const cellBackingPx = useMemo(() => {
+    const maxDim = Math.max(width, height)
+    // Backing store ~960px on the long edge so fine grids stay legible; 2–8 px per cell.
+    return Math.min(8, Math.max(2, Math.floor(960 / maxDim)))
+  }, [width, height])
+
+  const maxGridDim = Math.max(width, height)
+  const panelMaxClass =
+    maxGridDim <= 48
+      ? 'max-w-[200px] sm:max-w-[220px]'
+      : maxGridDim <= 120
+        ? 'max-w-[min(92vw,440px)]'
+        : 'max-w-[min(96vw,min(900px,100vw-1.5rem))]'
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -350,17 +452,39 @@ function TerrainGrid({
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    canvas.width = width
-    canvas.height = height
+    const px = cellBackingPx
+    canvas.width = width * px
+    canvas.height = height * px
     ctx.imageSmoothingEnabled = false
     for (let i = 0; i < categories.length; i++) {
       const x = i % width
       const y = Math.floor(i / width)
       const cat = categories[i]!
       ctx.fillStyle = TERRAIN_PIXEL[cat]
-      ctx.fillRect(x, y, 1, 1)
+      ctx.fillRect(x * px, y * px, px, px)
     }
-  }, [categories, height, width])
+
+    const zm = zoneMarking
+    if (zm && zones && hasLiveCells) {
+      const res = resolutionM
+      const yawEff = zm.yawDeg ?? 0
+      const rpx = Math.max(2, Math.min(6, Math.ceil(px / 2)))
+      for (const z of zones) {
+        if (z.status !== 'operator_marked') continue
+        const zx = z.odom_x
+        const zy = z.odom_y
+        if (typeof zx !== 'number' || typeof zy !== 'number' || !Number.isFinite(zx) || !Number.isFinite(zy)) continue
+        const cell = odomToTerrainCell(zm.x, zm.y, yawEff, zx, zy, width, height, res)
+        if (!cell) continue
+        const { ix, iy } = cell
+        ctx.fillStyle = ZONE_MARKER_RGBA[z.id]
+        ctx.fillRect(ix * px - rpx, iy * px - rpx, px + 2 * rpx, px + 2 * rpx)
+        ctx.strokeStyle = 'rgba(0,0,0,0.55)'
+        ctx.lineWidth = Math.max(1, px > 3 ? 2 : 1)
+        ctx.strokeRect(ix * px - rpx + 0.5, iy * px - rpx + 0.5, px + 2 * rpx - 1, px + 2 * rpx - 1)
+      }
+    }
+  }, [categories, cellBackingPx, height, width, zones, zoneMarking, hasLiveCells, resolutionM])
 
   function clickCanvas(e: React.MouseEvent<HTMLCanvasElement>) {
     if (!pickArmed || !pickEnabled || !onPick) return
@@ -379,7 +503,7 @@ function TerrainGrid({
   const picking = Boolean(pickArmed && pickEnabled && onPick)
 
   return (
-    <div className="mx-auto w-full max-w-[200px] space-y-2 sm:max-w-[220px] md:mx-0">
+    <div className={clsx('mx-auto w-full space-y-2 md:mx-0', panelMaxClass)}>
       <div
         className={clsx(
           'rounded-md border bg-slate-950 p-1.5 sm:p-2',
@@ -398,6 +522,13 @@ function TerrainGrid({
         <span>{hasLiveCells ? `${width}×${height} @ ${grid!.resolution.toFixed(2)} m/cell` : `mock ${width}×${height} @ 0.10 m/cell`}</span>
         <span>{hasLiveCells ? `${grid!.status}, age ${grid!.ageMs ?? '--'} ms` : 'waiting for /autonomy/local_terrain_grid'}</span>
       </div>
+      <p className="text-[10px] leading-snug text-slate-500">
+        Terrain: <span className="text-slate-400">gray</span> = unknown, <span className="text-emerald-400/90">green</span> = traversable,{' '}
+        <span className="text-amber-300/90">yellow</span> = uneven / drop-off risk (slow down), <span className="text-red-400/90">red</span> = obstacle; white strip =
+        robot forward. Markers:{' '}
+        <span className="text-emerald-300/90">start</span>, <span className="text-amber-300/90">dig</span>, <span className="text-orange-300/90">dump</span>,{' '}
+        <span className="text-red-400/90">no-go</span>.
+      </p>
     </div>
   )
 }
@@ -539,7 +670,7 @@ function FallbackDiagnostics({ snapshot }: { snapshot: MissionControlSnapshot })
 }
 
 function App() {
-  const [scenario, setScenarioState] = useState<DemoScenario>('degraded')
+  const [scenario, setScenarioState] = useState<DemoScenario>(initialDemoScenario)
   const [commandStatus, setCommandStatus] = useState('No command sent in this session.')
   const [bagName, setBagName] = useState('mission_data')
   const [mapName, setMapName] = useState('lunar_field')
@@ -576,7 +707,9 @@ function App() {
   const odomLive =
     displaySnapshot.zoneMarking?.odomStatus === 'live' ||
     displaySnapshot.topics.some((t) => t.topic === '/odom' && t.status === 'live')
-  const canZonePick = displaySnapshot.mission.connected && odomLive && !motionDisabled
+  /** Live + connected bridge + stale/missing odom: block (real pose unknown). Otherwise allow UI / mock playtest. */
+  const zoneMarkingBlockedByOdom = mode === 'live' && liveStatus.connected && !odomLive
+  const canZonePick = displaySnapshot.mission.connected && !zoneMarkingBlockedByOdom
 
   async function runCommand(command: Parameters<typeof sendCommand>[0]) {
     const result = await sendCommand(command)
@@ -592,6 +725,7 @@ function App() {
         bridgeMode={mode}
         setBridgeMode={setMode}
         liveAvailable={liveAvailable}
+        runCommand={runCommand}
       />
       <main className="mx-auto flex max-w-[1800px] flex-col gap-4 px-3 py-4 sm:px-4">
         {mode === 'live' ? (
@@ -636,6 +770,8 @@ function App() {
                 {zoneArm ? <p className="text-center text-xs text-amber-200">Click map</p> : null}
                 <TerrainGrid
                   grid={displaySnapshot.terrainGrid}
+                  zones={displaySnapshot.zones}
+                  zoneMarking={displaySnapshot.zoneMarking}
                   pickArmed={zoneArm !== null}
                   pickEnabled={canZonePick}
                   onPick={(p) => {
@@ -655,9 +791,9 @@ function App() {
               <div className="min-w-0 space-y-3">
                 <div className="grid grid-cols-2 gap-2">
                   <MetricCard metric={{ label: 'Obstacles', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.obstacleCells) : '--', detail: displaySnapshot.terrainGrid?.note ?? 'terrain grid', status: displaySnapshot.terrainGrid?.status === 'live' ? 'ok' : displaySnapshot.terrainGrid ? 'warn' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Pothole risk', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.cautionCells) : '--', detail: 'caution cells', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.cautionCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
+                  <MetricCard metric={{ label: 'Rough / drop risk', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.cautionCells) : '--', detail: 'yellow cells (value 60)', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.cautionCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
                   <MetricCard metric={{ label: 'Unknown cells', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.unknownCells) : '--', detail: displaySnapshot.terrainGrid?.frameId ?? 'base_link', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.unknownCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Steering', value: scenario === 'nominal' ? 'forward' : 'hold', detail: scenario === 'nominal' ? 'short segment' : 'no target', status: scenario === 'nominal' ? 'ok' : 'idle' }} />
+                  <MetricCard metric={{ label: 'Steering', value: isNominalLikeScenario(scenario) ? 'forward' : 'hold', detail: isNominalLikeScenario(scenario) ? 'short segment' : 'no target', status: isNominalLikeScenario(scenario) ? 'ok' : 'idle' }} />
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Button disabled={motionDisabled}>Clear Map</Button>
@@ -671,7 +807,22 @@ function App() {
 
         <section className="grid gap-4 xl:grid-cols-[1fr_1.2fr_1fr]">
           <Panel title="Zone marking" icon={<Flag className="h-4 w-4 text-orange-300" />}>
+            <p className="mb-3 text-xs leading-relaxed text-slate-400">
+              <span className="font-medium text-slate-300">Odometry (&quot;odom&quot;)</span> is the robot&apos;s estimated position and heading
+              (usually from wheel encoders plus IMU), published on the ROS topic{' '}
+              <span className="font-mono text-slate-300">/odom</span>. Zone marks need that pose so the dig/dump points land in the right place on the
+              field. On a <span className="text-slate-300">real robot</span>, marking stays disabled until the live bridge reports{' '}
+              <span className="font-mono text-slate-300">/odom</span> as live. Use{' '}
+              <span className="text-slate-300">Mock bridge</span> in the header to rehearse Prepare mark + map clicks with fake telemetry (pick any
+              scenario except Offline).
+            </p>
             <ZoneMarkingPanel snapshot={displaySnapshot} armedZone={zoneArm} onArm={setZoneArm} canArm={canZonePick} />
+            {zoneMarkingBlockedByOdom ? (
+              <p className="mt-2 text-xs text-amber-200/90">
+                Live bridge is connected but <span className="font-mono">/odom</span> is not live yet — fix localization, or switch to Mock bridge to
+                practice the UI.
+              </p>
+            ) : null}
           </Panel>
 
           <Panel title="Manual Teleop" icon={<Gauge className="h-4 w-4 text-cyan-300" />}>
@@ -821,17 +972,39 @@ function App() {
           </Panel>
         </section>
 
-        <Panel title="Autonomy state machine" icon={<Activity className="h-4 w-4 text-cyan-300" />}>
-          <AutonomyStateMachineChart current={displaySnapshot.mission.state} />
-        </Panel>
+        <section className="grid gap-4 xl:grid-cols-3">
+          <Panel title="Dig / dump autonomy (mission)" icon={<GitBranch className="h-4 w-4 text-amber-300" />}>
+            <DigDumpMissionChart current={displaySnapshot.mission.state} />
+          </Panel>
+          <Panel title="Dig sequence (node FSM)" icon={<Shovel className="h-4 w-4 text-amber-300" />}>
+            <DigSequenceStateChart digSequence={displaySnapshot.mission.digSequence} />
+          </Panel>
+          <Panel title="Nav autonomy" icon={<Activity className="h-4 w-4 text-sky-300" />}>
+            <NavAutonomyStateChart current={displaySnapshot.mission.state} />
+          </Panel>
+        </section>
 
         <section className="grid gap-4 xl:grid-cols-2">
           <Panel title="Localization And SLAM" icon={<Radio className="h-4 w-4 text-purple-300" />}>
             <div className="grid grid-cols-2 gap-2">
-              <MetricCard metric={{ label: 'Pose source', value: scenario === 'nominal' ? '/odom' : 'none', detail: scenario === 'nominal' ? 'live topic' : 'audit needed', status: scenario === 'nominal' ? 'ok' : 'warn' }} />
-              <MetricCard metric={{ label: 'Wheel odom', value: scenario === 'nominal' ? 'pending' : 'unknown', detail: 'integrate encoders', status: 'warn' }} />
+              <MetricCard
+                metric={{
+                  label: 'Pose source',
+                  value: isNominalLikeScenario(scenario) ? '/odom' : 'none',
+                  detail: isNominalLikeScenario(scenario) ? 'live topic' : 'audit needed',
+                  status: isNominalLikeScenario(scenario) ? 'ok' : 'warn',
+                }}
+              />
+              <MetricCard
+                metric={{
+                  label: 'Wheel odom',
+                  value: isNominalLikeScenario(scenario) ? 'pending' : 'unknown',
+                  detail: 'integrate encoders',
+                  status: 'warn',
+                }}
+              />
               <MetricCard metric={{ label: 'Encoders', value: 'bad data', detail: 'needs fix', status: 'bad' }} />
-              <MetricCard metric={{ label: 'SLAM', value: scenario === 'nominal' ? 'evaluating' : 'not ready', detail: 'evaluate', status: 'warn' }} />
+              <MetricCard metric={{ label: 'SLAM', value: isNominalLikeScenario(scenario) ? 'evaluating' : 'not ready', detail: 'evaluate', status: 'warn' }} />
             </div>
           </Panel>
           <Panel title="Advanced Controls" icon={<Terminal className="h-4 w-4 text-slate-300" />}>
