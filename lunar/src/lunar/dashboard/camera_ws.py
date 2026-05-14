@@ -24,7 +24,12 @@ from geometry_msgs.msg import Twist
 
 
 CAMERA_WS_PORT = 8767
-CAMERA_PUSH_INTERVAL_SEC = 1.0 / 20.0
+# Outbound JPEG cap (per camera). ROS may publish faster; we coalesce to protect the Jetson
+# and browser. Increase via ROS param ``max_camera_push_hz`` (see ``CameraWsBridge``).
+_DEFAULT_CAMERA_PUSH_HZ = 30.0
+_DEFAULT_SENSOR_PUSH_HZ = 20.0
+_camera_push_interval_sec = 1.0 / _DEFAULT_CAMERA_PUSH_HZ
+_sensor_push_interval_sec = 1.0 / _DEFAULT_SENSOR_PUSH_HZ
 
 _clients_lock = threading.Lock()
 _clients = {"rgb": set(), "rear": set()}
@@ -151,7 +156,7 @@ def _schedule_broadcast(camera_name: str, payload: bytes):
     _latest_frames[camera_name] = payload
 
     now = time.monotonic()
-    if now - _last_push_ts[camera_name] < CAMERA_PUSH_INTERVAL_SEC:
+    if _camera_push_interval_sec > 0.0 and (now - _last_push_ts[camera_name] < _camera_push_interval_sec):
         return
     _last_push_ts[camera_name] = now
     _io_loop.add_callback(_broadcast, camera_name, payload)
@@ -177,7 +182,7 @@ def _schedule_sensor_broadcast():
     if _io_loop is None:
         return
     now = time.monotonic()
-    if now - _last_sensor_push_ts < CAMERA_PUSH_INTERVAL_SEC:
+    if _sensor_push_interval_sec > 0.0 and (now - _last_sensor_push_ts < _sensor_push_interval_sec):
         return
     _last_sensor_push_ts = now
     with _clients_lock:
@@ -185,9 +190,39 @@ def _schedule_sensor_broadcast():
     _io_loop.add_callback(_broadcast_sensors, payload)
 
 
+def _configure_push_rates(*, max_camera_push_hz: float, max_sensor_push_hz: float) -> None:
+    """Set module-level intervals from ROS parameters (``CameraWsBridge``)."""
+    global _camera_push_interval_sec, _sensor_push_interval_sec
+    cam = float(max_camera_push_hz)
+    if cam <= 0.0:
+        _camera_push_interval_sec = 0.0
+    else:
+        cam = max(1.0, min(cam, 60.0))
+        _camera_push_interval_sec = 1.0 / cam
+    sens = float(max_sensor_push_hz)
+    if sens <= 0.0:
+        _sensor_push_interval_sec = 0.0
+    else:
+        sens = max(1.0, min(sens, 50.0))
+        _sensor_push_interval_sec = 1.0 / sens
+
+
 class CameraWsBridge(Node):
     def __init__(self):
         super().__init__("lunar_camera_ws_bridge")
+
+        self.declare_parameter("max_camera_push_hz", _DEFAULT_CAMERA_PUSH_HZ)
+        self.declare_parameter("max_sensor_push_hz", _DEFAULT_SENSOR_PUSH_HZ)
+        _configure_push_rates(
+            max_camera_push_hz=float(self.get_parameter("max_camera_push_hz").value),
+            max_sensor_push_hz=float(self.get_parameter("max_sensor_push_hz").value),
+        )
+        cam_label = "unlimited" if _camera_push_interval_sec <= 0.0 else f"{round(1.0 / _camera_push_interval_sec, 2)} Hz"
+        sens_label = "unlimited" if _sensor_push_interval_sec <= 0.0 else f"{round(1.0 / _sensor_push_interval_sec, 2)} Hz"
+        self.get_logger().info(
+            f"camera_ws push limits: JPEG {cam_label} per camera, /sensor/ws {sens_label} "
+            f"(set max_camera_push_hz / max_sensor_push_hz; 0 = no cap)"
+        )
 
         sensor_qos = QoSProfile(
             depth=3,

@@ -34,12 +34,12 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       setSocketState((prev) => (prev === 'live' ? prev : 'connecting'))
       const path = cameraSocketNames[camera.id]
       socket = new WebSocket(`${wsBase}/camera/ws/${path}`)
-      socket.binaryType = 'blob'
+      socket.binaryType = 'arraybuffer'
 
       socket.onmessage = (event) => {
         if (closed) return
-        const blob =
-          event.data instanceof Blob ? event.data : new Blob([event.data], { type: 'image/jpeg' })
+        const buf = event.data as ArrayBuffer
+        const blob = new Blob([buf], { type: 'image/jpeg' })
         const nextUrl = URL.createObjectURL(blob)
         setFrameUrl(nextUrl)
         setSocketState('live')

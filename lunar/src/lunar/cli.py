@@ -2204,7 +2204,18 @@ def _ros_source_env_chain(root: Path) -> str:
 
 def _camera_ws_command(root: Path) -> str:
     """Bash command to run camera_ws.py (JPEG streams + /sensor/ws)."""
-    return f"{_ros_source_env_chain(root)} && {sys.executable} {shlex.quote(str(root / 'lunar' / 'src' / 'lunar' / 'dashboard' / 'camera_ws.py'))}"
+    script = shlex.quote(str(root / "lunar" / "src" / "lunar" / "dashboard" / "camera_ws.py"))
+    cmd = f"{_ros_source_env_chain(root)} && {sys.executable} {script}"
+    ros_arg_parts: list[str] = []
+    cam_hz = os.environ.get("LUNAR_MAX_CAMERA_PUSH_HZ", "").strip()
+    if cam_hz:
+        ros_arg_parts.append(f"-p max_camera_push_hz:={shlex.quote(cam_hz)}")
+    sens_hz = os.environ.get("LUNAR_MAX_SENSOR_PUSH_HZ", "").strip()
+    if sens_hz:
+        ros_arg_parts.append(f"-p max_sensor_push_hz:={shlex.quote(sens_hz)}")
+    if ros_arg_parts:
+        cmd += " --ros-args " + " ".join(ros_arg_parts)
+    return cmd
 
 
 def _mission_bridge_run_command(root: Path, port: int, host: str) -> str:
