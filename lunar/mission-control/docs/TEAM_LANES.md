@@ -48,7 +48,7 @@ Acceptance:
 
 Owns:
 
-- Front/rear/tracking stream display
+- Front/rear stream display
 - Reconnect states
 - FPS/age indicators
 - No-stream states

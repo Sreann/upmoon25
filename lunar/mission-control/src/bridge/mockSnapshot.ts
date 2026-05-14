@@ -238,12 +238,10 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
     cameras: [
       { id: 'front', name: 'Front D435 RGB', topic: '/camera/rgb/image_compressed', status: offline ? 'missing' : 'live', fps: offline ? '--' : '30', resolution: '640x480' },
       { id: 'rear', name: 'Rear D435 RGB', topic: '/camera/rear/image_compressed', status: offline ? 'missing' : degraded ? 'connecting' : 'live', fps: degraded || offline ? '--' : '30', resolution: '640x480' },
-      { id: 'tracking', name: 'T265 Tracking', topic: '/camera/tracking/image_compressed', status: offline ? 'missing' : degraded ? 'missing' : 'live', fps: degraded || offline ? '--' : '30', resolution: '848x800' },
     ],
     hardware: [
       { category: 'Vision', name: 'Front D435 RGB', status: offline ? 'NO DEVICE' : 'CONNECTED', detail: '018322071465', severity: offline ? 'bad' : 'ok' },
       { category: 'Vision', name: 'Rear D435 RGB', status: offline ? 'NO DEVICE' : degraded ? 'CONNECTING' : 'CONNECTED', detail: '018322071045', severity: degraded ? 'warn' : offline ? 'bad' : 'ok' },
-      { category: 'Vision', name: 'T265 Tracking', status: degraded ? 'UNKNOWN' : offline ? 'NO DEVICE' : 'CONNECTED', detail: 'verify in field', severity: degraded ? 'warn' : offline ? 'bad' : 'ok' },
       { category: 'Depth', name: '/camera/depth/points', status: degraded ? 'UNKNOWN' : offline ? 'NO TOPIC' : 'LIVE', detail: 'field audit required', severity: degraded ? 'warn' : offline ? 'bad' : 'ok' },
       { category: 'Actuation', name: 'Left Sabertooth', status: offline ? 'UNKNOWN' : 'CONNECTED', detail: '/dev/ttyACM0', severity: offline ? 'warn' : 'ok' },
       { category: 'Actuation', name: 'Right Sabertooth', status: offline ? 'UNKNOWN' : 'CONNECTED', detail: '/dev/ttyACM1', severity: offline ? 'warn' : 'ok' },
@@ -284,7 +282,7 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
       { label: 'Manual stop command', status: offline ? 'bad' : 'ok', detail: offline ? 'bridge offline' : 'available through command API' },
       { label: 'Front/rear cameras', status: degraded ? 'warn' : offline ? 'bad' : 'ok', detail: degraded ? 'rear stream connecting' : offline ? 'no stream' : 'both live' },
       { label: 'Depth point cloud', status: degraded ? 'bad' : offline ? 'bad' : 'ok', detail: degraded ? 'not confirmed' : offline ? 'no topic' : 'live topic' },
-      { label: 'Localization source', status: degraded ? 'warn' : offline ? 'bad' : 'ok', detail: degraded ? 'T265/odom unknown' : offline ? 'no odom' : 'T265 provisional' },
+      { label: 'Localization source', status: degraded ? 'warn' : offline ? 'bad' : 'ok', detail: degraded ? '/odom unknown' : offline ? 'no odom' : '/odom live' },
       { label: 'Dig/dump controls', status: offline ? 'bad' : 'ok', detail: offline ? 'disabled' : 'mock command path ready' },
     ],
     terrainGrid: buildMockTerrainGrid(scenario),

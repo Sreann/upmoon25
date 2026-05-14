@@ -101,14 +101,39 @@ def test_actuator_enum_strings_are_keyboard_publisher_keys():
 
 
 def test_keyboard_sensor_subscription_topic_contract():
-    """Telemetry topics the keyboard TUI listens on (IR + encoders)."""
+    """Telemetry topics the keyboard TUI listens on (IR + encoders + debug frame)."""
     assert KEYBOARD_SENSOR_TOPICS == {
         "ir_general": "/sensor/ir",
         "ir_right": "/sensor/ir/right",
         "ir_left": "/sensor/ir/left",
         "encoder_left": "/sensor/encoder/left",
         "encoder_right": "/sensor/encoder/right",
+        "encoder_telemetry": "/sensor/encoder/telemetry",
     }
+
+
+def test_encoder_telemetry_callback_updates_all_debug_fields():
+    actuator = RobotActuators()
+    msg = type("Msg", (), {"data": [3, 1, 2, 0, 14, 9]})()
+
+    actuator._on_encoder_telemetry(msg)
+
+    assert actuator.telemetry["enc_pin_right"] == 3
+    assert actuator.telemetry["enc_pin_left"] == 1
+    assert actuator.telemetry["enc_dec_right"] == 2
+    assert actuator.telemetry["enc_dec_left"] == 0
+    assert actuator.telemetry["enc_bad_right"] == 14
+    assert actuator.telemetry["enc_bad_left"] == 9
+
+
+def test_encoder_telemetry_callback_ignores_short_payload():
+    actuator = RobotActuators()
+    before = dict(actuator.telemetry)
+    msg = type("Msg", (), {"data": [1, 2, 3]})()
+
+    actuator._on_encoder_telemetry(msg)
+
+    assert actuator.telemetry == before
 
 
 def test_resolve_control_topic_explicit_sim_and_robot():

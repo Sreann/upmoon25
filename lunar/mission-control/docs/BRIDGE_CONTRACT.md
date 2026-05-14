@@ -129,9 +129,8 @@ Do not send raw ROS image messages through the general mission snapshot.
 Use separate streams:
 
 ```text
-WS /camera/ws/front
+WS /camera/ws/rgb
 WS /camera/ws/rear
-WS /camera/ws/tracking
 ```
 
 or:

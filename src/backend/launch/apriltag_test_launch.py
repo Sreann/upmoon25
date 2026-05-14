@@ -36,12 +36,6 @@ def generate_launch_description():
         }]
     )
 
-    t265_driver = Node(
-        package='frontend',
-        executable='t265_driver',
-        output='screen',
-    )
-
     tag_detector = Node(
         package='frontend',
         executable='tag_detector',
@@ -65,7 +59,6 @@ def generate_launch_description():
         node_robot_state_publisher,
         tag_detector,
         rgb_driver,
-        t265_driver,
         #arduino_driver,
         #joint_state
     ])

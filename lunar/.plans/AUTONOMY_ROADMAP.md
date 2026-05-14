@@ -31,6 +31,8 @@ Cross-functional backlog. Order work inside each group by dependency (safety and
 - **Dashboard and bridge**: Live panels for health, grid, flags, mission state; ship only bridge commands that are tested; RViz/Foxglove remain developer tools for TF and clouds.
 - **Software quality**: Offline tests for pure math, codecs, and JSON contracts; venue presets (grid presets already exist via `lunar autonomy-stack --grid-preset`).
 
+**Stack note:** Intel RealSense T265 is deprecated; localization work should assume `/odom` from wheel encoders, SLAM, or another chosen stack, not a tracking camera.
+
 ## Progress Ledger
 
 Last updated: 2026-05-13
@@ -99,7 +101,7 @@ We can definitively mark progress on the operator dashboard and bridge foundatio
 ### Not Completed Yet
 
 - Confirming `/camera/depth/points` on the real robot.
-- Confirming T265, wheel odometry, TF, and SLAM viability.
+- Confirming wheel odometry, `/odom`, TF, and SLAM viability.
 - Proving the live top-down terrain grid is spatially correct on hardware.
 - Proving red/orange flag detection works in the Exolith lab.
 - Implementing navigation toward marked or detected zones.

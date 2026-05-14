@@ -360,13 +360,11 @@ def _render_command_metrics():
 
 def _render_camera_panel():
     st.subheader("👁️ Vision Feed")
-    tab_rgb, tab_rear, tab_tracking = st.tabs(["Front D435 RGB", "Rear D435 RGB", "T265 Tracking"])
+    tab_rgb, tab_rear = st.tabs(["Front D435 RGB", "Rear D435 RGB"])
     with tab_rgb:
         _render_camera_stream("Front D435 RGB", "rgb", height=520)
     with tab_rear:
         _render_camera_stream("Rear D435 RGB", "rear", height=520)
-    with tab_tracking:
-        _render_camera_stream("T265 Tracking", "tracking", height=520)
 
 
 @_fragment(run_every=UI_REFRESH_SEC)
@@ -535,15 +533,15 @@ def _render_analytics_live():
             df_hist["Time"] -= df_hist["Time"].iloc[0]
             st.line_chart(df_hist, x="Time", y=["CPU Load (%)", "Temp (°C)", "Battery (V)"], height=300)
 
-        st.subheader("📉 Odometry Divergence (V-SLAM vs Baseline)")
+        st.subheader("📉 Odometry vs command velocity")
         if len(state.history_time) > 2:
             df_odom = pd.DataFrame({
                 "Time": list(state.history_time),
-                "V-SLAM (T265)": list(state.history_vel),
+                "/odom linear": list(state.history_vel),
                 "Baseline (Cmd)": list(state.history_base_vel),
             })
             df_odom["Time"] -= df_odom["Time"].iloc[0]
-            st.line_chart(df_odom, x="Time", y=["V-SLAM (T265)", "Baseline (Cmd)"], height=300)
+            st.line_chart(df_odom, x="Time", y=["/odom linear", "Baseline (Cmd)"], height=300)
 
     with col_radar:
         st.subheader("🦇 IR Proximity Radar")

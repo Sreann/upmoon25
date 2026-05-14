@@ -53,12 +53,6 @@ def generate_launch_description():
        output='screen'
     )
 
-    t265_driver = Node(
-       package='frontend',
-       executable='t265_driver',
-       output='screen'
-    )
-
     tag_detector = Node(
        package='frontend',
        executable='tag_detector',
@@ -75,6 +69,5 @@ def generate_launch_description():
         map_odom_tf,
         arduino_driver,
         rgb_driver,
-        t265_driver,
         tag_detector
     ])

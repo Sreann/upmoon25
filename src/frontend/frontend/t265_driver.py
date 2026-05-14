@@ -19,6 +19,12 @@ except (ImportError, AttributeError):
 
 from rclpy.node import Node, QoSProfile
 
+"""Deprecated: Intel RealSense T265 is no longer part of the robot stack.
+
+The node remains for legacy bring-up only; default launch files no longer start it.
+Prefer another `/odom` publisher (wheel odometry, SLAM, or simulation).
+"""
+
 T265_SN = os.environ.get("UPMOON25_T265_SN", "").strip()
 COV = 0.01
 TRACKING_WIDTH = 848
@@ -249,6 +255,10 @@ def main(args=None):
     rclpy.init()
 
     t265 = T265Driver()
+    t265.get_logger().warn(
+        "t265_driver is deprecated and not started by default launch files; "
+        "ensure another /odom source is running."
+    )
 
     rclpy.spin(t265)
 

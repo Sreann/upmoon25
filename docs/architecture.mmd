@@ -7,7 +7,6 @@ flowchart LR
   subgraph HW["Hardware / Sensors / Sim"]
     RGB[RGB Camera]
     DEPTH[Depth Sensor]
-    T265[T265 Odometry]
     IR[IR Sensor]
     BUCK_ALARM[Bucket Alarm]
     MOTORS[Drive Motors]
@@ -20,7 +19,6 @@ flowchart LR
     subgraph JETSON_FE["Frontend drivers - hardware IO"]
       RGB_DRV[rgb_driver\npkg: frontend\nsubsystem: perception IO]
       DEPTH_DRV[depth_driver\npkg: frontend\nsubsystem: perception IO]
-      T265_DRV[t265_driver\npkg: frontend\nsubsystem: state IO]
       ARD[arduino_driver\npkg: frontend\nsubsystem: IO bridge]
       DRIVE[drive_motors\npkg: frontend\nsubsystem: actuation]
       CONVEYOR[conveyor\npkg: frontend\nsubsystem: actuation]
@@ -63,7 +61,6 @@ flowchart LR
   RGB -->|publishes /camera/rgb/image_compressed - compressed frames to| RGB_DRV
   RGB -->|publishes /camera/rgb/camera_info - camera intrinsics to| RGB_DRV
   DEPTH -->|publishes raw depth - point cloud source to| DEPTH_DRV
-  T265 -->|publishes odometry - tracking pose estimate to| T265_DRV
   IR -->|streams IR data - Arduino sensor to| ARD
   BUCK_ALARM -->|streams alarm signal - jam or limit to| BUCK_ALARM_NODE
 
@@ -77,9 +74,9 @@ flowchart LR
   DEPTH_DRV -->|publishes /camera/depth/points - mapping input to| MAP
   MAIN -->|publishes /cmd/pointcloud - on-demand depth toggle to| DEPTH_DRV
 
-  T265_DRV -->|publishes /odom - pose for localizer to| LOC
-  T265_DRV -->|publishes /odom - pose for planner to| PLAN
-  T265_DRV -->|publishes /odom - pose for motion to| MOT
+  ODOM_PUB[Localization\npublishes /odom] -->|pose for localizer| LOC
+  ODOM_PUB -->|pose for planner| PLAN
+  ODOM_PUB -->|pose for motion| MOT
 
   ARD -->|publishes /sensor/ir - mining state input to| MINER
   ARD -->|publishes /camera/rgb/pan - pan feedback to| HEAD

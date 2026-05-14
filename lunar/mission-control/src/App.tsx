@@ -987,8 +987,22 @@ function App() {
         <section className="grid gap-4 xl:grid-cols-2">
           <Panel title="Localization And SLAM" icon={<Radio className="h-4 w-4 text-purple-300" />}>
             <div className="grid grid-cols-2 gap-2">
-              <MetricCard metric={{ label: 'Pose source', value: isNominalLikeScenario(scenario) ? 'T265' : 'none', detail: isNominalLikeScenario(scenario) ? 'provisional' : 'audit needed', status: isNominalLikeScenario(scenario) ? 'ok' : 'warn' }} />
-              <MetricCard metric={{ label: 'T265', value: isNominalLikeScenario(scenario) ? 'live' : 'unknown', detail: 'field check', status: isNominalLikeScenario(scenario) ? 'ok' : 'warn' }} />
+              <MetricCard
+                metric={{
+                  label: 'Pose source',
+                  value: isNominalLikeScenario(scenario) ? '/odom' : 'none',
+                  detail: isNominalLikeScenario(scenario) ? 'live topic' : 'audit needed',
+                  status: isNominalLikeScenario(scenario) ? 'ok' : 'warn',
+                }}
+              />
+              <MetricCard
+                metric={{
+                  label: 'Wheel odom',
+                  value: isNominalLikeScenario(scenario) ? 'pending' : 'unknown',
+                  detail: 'integrate encoders',
+                  status: 'warn',
+                }}
+              />
               <MetricCard metric={{ label: 'Encoders', value: 'bad data', detail: 'needs fix', status: 'bad' }} />
               <MetricCard metric={{ label: 'SLAM', value: isNominalLikeScenario(scenario) ? 'evaluating' : 'not ready', detail: 'evaluate', status: 'warn' }} />
             </div>
