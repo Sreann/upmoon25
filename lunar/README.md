@@ -31,8 +31,8 @@ uv run lunar dashboard
 |---------|------|
 | `robot` | **Manual** — frontend / drivers (teleop, sensors). Base layer; run this first on hardware. |
 | `nav` | **Navigation autonomy** — perception + local terrain grid + flags + supervisor + `navigation_controller` (zone goal → dig) + **`nav_mission_executor`**. After marking the dig zone, start the mission: `ros2 topic pub --once /autonomy/nav_mission/command std_msgs/String \"data: start\"`. |
-| `nav-dig` | **Nav → dig** — same stack as `nav`, plus **`dig_sequence`** in the background with `wait_for_nav_dig_arm:=true`. When the nav mission hits dig handoff it publishes `/autonomy/dig_arm` and the dig profile takes over. Requires `--calibrated-rotary` (and optional `--encoder-side`). |
-| `dig` | **Dig autonomy alone** — foreground `dig_sequence` (bench / standalone). Same `--calibrated-rotary` requirement. |
+| `nav-dig` | **Nav → dig** — same stack as `nav`, plus **`dig_sequence`** in the background with `wait_for_nav_dig_arm:=true`. When the nav mission hits dig handoff it publishes `/autonomy/dig_arm` and the dig profile takes over. Use `--calibrated-rotary` (+ optional `--encoder-side`) or **`--dig-timing-ms`** for timed forward+backward legs without encoders. |
+| `dig` | **Dig autonomy alone** — foreground `dig_sequence` (bench / standalone). Requires `--calibrated-rotary`, or `--dig-timing-ms` (same ms forward+back, no encoders). |
 
 **Other profiles**
 
@@ -47,8 +47,8 @@ Examples:
 ```bash
 uv run lunar run robot
 uv run lunar run nav --grid-preset standard
-uv run lunar run nav-dig --calibrated-rotary 800 --encoder-side left
-uv run lunar run dig --calibrated-rotary 800
+uv run lunar run nav-dig --dig-timing-ms 5000
+uv run lunar run dig --dig-timing-ms 5000
 ```
 
 Then open `http://<robot-ip>:8501`. **`lunar dashboard`** starts the UI plus **`camera_ws`** (port **8767**, JPEG + `/sensor/ws`) and **`mission_bridge`** (port **8770**, `/mission/ws`), matching what you used to get from Streamlit without extra commands. Stop everything it spawned with **`lunar kill`**.
