@@ -69,6 +69,36 @@ def ir_setup_stop_le(
     return bool(iv <= it and primed), new_above
 
 
+def ir_bucket_step_gate_released(
+    ir_value: int,
+    anchor_ir_before_step: int,
+    min_drop: int,
+    *,
+    elapsed_sec: float,
+    timeout_sec: float,
+) -> bool:
+    """
+    After ``cmd/bucket_pos`` incremented, defer the **next** step until IR has moved deeper by at
+    least ``min_drop`` points relative to the reading **before** that command (typically IR falls
+    as the bucket lowers). If there was no valid IR before the step (``anchor < 0``), only
+    ``timeout_sec`` releases the gate.
+
+    Disable by passing ``min_drop <= 0`` (caller skips the wait entirely).
+    """
+    d = max(0, int(min_drop))
+    if d <= 0:
+        return True
+    if float(elapsed_sec) >= float(timeout_sec):
+        return True
+    iv = int(ir_value)
+    if iv < 0:
+        return False
+    anchor = int(anchor_ir_before_step)
+    if anchor < 0:
+        return False
+    return iv <= anchor - d
+
+
 def encoder_forward_target_reached(
     encoder_value: int,
     calibrated_rotary: int,

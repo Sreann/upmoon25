@@ -256,6 +256,7 @@ def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | 
         "maxCyclesLe": raw.get("max_cycles_le"),
         "bucketPosCommanded": raw.get("bucket_pos_commanded"),
         "keepBucketChainUntilDone": bool(raw.get("keep_bucket_chain_until_done", False)),
+        "bucketChainSpeed": raw.get("bucket_chain_speed"),
         "phaseElapsedSec": raw.get("phase_elapsed_sec"),
         "conveyorRemainingSec": raw.get("conveyor_remaining_sec"),
         "useLocalTerrainGrid": bool(raw.get("use_local_terrain_grid", False)),
@@ -265,6 +266,11 @@ def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | 
         "terrainReverseOk": bool(raw.get("terrain_reverse_ok", True)),
         "terrainGateForward": raw.get("terrain_gate_forward"),
         "terrainGateReverse": raw.get("terrain_gate_reverse"),
+        "irBucketGateMinIrDrop": raw.get("ir_bucket_gate_min_ir_drop"),
+        "irBucketGateTimeoutSec": raw.get("ir_bucket_gate_timeout_sec"),
+        "irBucketGateWaiting": bool(raw.get("ir_bucket_gate_waiting", False)),
+        "irAnchorBeforeLastBucketStep": raw.get("ir_anchor_before_last_bucket_step"),
+        "irBucketGateElapsedSec": raw.get("ir_bucket_gate_elapsed_sec"),
     }
 
 
