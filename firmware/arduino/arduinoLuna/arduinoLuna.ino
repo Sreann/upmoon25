@@ -68,12 +68,31 @@ Servo lin_bucket_servo;
 int servo_pos;
 int cam_height;
 int bucket_height;
+bool actuators_armed;
 long encoder_right_count;
 long encoder_left_count;
 int8_t last_encoded_right;
 int8_t last_encoded_left;
 uint32_t encoder_right_invalid;
 uint32_t encoder_left_invalid;
+
+int convertRangeToDutyCycle(int percent);
+
+static void armActuatorsIfNeeded() {
+  if (actuators_armed) {
+    return;
+  }
+  actuators_armed = true;
+
+  // Apply known-safe command targets before enabling PWM output pins.
+  cam_servo.write(servo_pos);
+  lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
+  lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
+
+  cam_servo.attach(SERVO_PIN);
+  lin_cam_servo.attach(CAM_PIN);
+  lin_bucket_servo.attach(BUCKET_PIN);
+}
 
 /*
  * Two back-to-back digitalRead() calls can sample channel A and B at different times. At a
@@ -162,6 +181,7 @@ void dispatchCommand(int command_id, int value) {
   switch (command_id) {
     case SERVO_PIN:
       servo_pos = constrain(value, 0, 180);
+      armActuatorsIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("servo_pos set to: ");
         Serial.println(servo_pos);
@@ -170,6 +190,7 @@ void dispatchCommand(int command_id, int value) {
 
     case CAM_PIN:
       cam_height = constrain(value, MIN_RANGE, MAX_RANGE);
+      armActuatorsIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("cam_height set to: ");
         Serial.println(cam_height);
@@ -178,6 +199,7 @@ void dispatchCommand(int command_id, int value) {
 
     case BUCKET_PIN:
       bucket_height = constrain(value, MIN_RANGE, MAX_RANGE);
+      armActuatorsIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("bucket_height set to: ");
         Serial.println(bucket_height);
@@ -229,18 +251,21 @@ void setup() {
   servo_pos = 90;
   cam_height = 0;
   bucket_height = 0;
+  actuators_armed = false;
   encoder_right_count = 0;
   encoder_left_count = 0;
   encoder_right_invalid = 0;
   encoder_left_invalid = 0;
 
   // Set linear actuator pins
-  pinMode(BUCKET_PIN, OUTPUT);
-  pinMode(CAM_PIN, OUTPUT);
+  // Keep servo/actuator control pins high-impedance until we get explicit commands.
+  pinMode(BUCKET_PIN, INPUT);
+  pinMode(CAM_PIN, INPUT);
+  pinMode(SERVO_PIN, INPUT);
 
   // Set dump motor pin and turn off
-  pinMode(DUMP_MOTOR, OUTPUT);
   digitalWrite(DUMP_MOTOR, HIGH);
+  pinMode(DUMP_MOTOR, OUTPUT);
 
   // Wheel encoders: quadrature on digital pins with internal pull-ups
   pinMode(ENCODE_R_A, INPUT_PULLUP);
@@ -255,15 +280,8 @@ void setup() {
   last_encoded_left = readEncoderStatePair(ENCODE_L_A, ENCODE_L_B) & 3;
 #endif
 
-  lin_cam_servo.attach(CAM_PIN);
-  lin_bucket_servo.attach(BUCKET_PIN);
-  cam_servo.attach(SERVO_PIN);
   Serial.begin(115200);
   Serial.setTimeout(5);
-
-  cam_servo.write(servo_pos);
-  lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
-  lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
 }
 
 void loop() {
@@ -271,9 +289,11 @@ void loop() {
     parseInput();
   }
 
-  cam_servo.write(servo_pos);
-  lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
-  lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
+  if (actuators_armed) {
+    cam_servo.write(servo_pos);
+    lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
+    lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
+  }
 
   int8_t pin_phase_right;
   int8_t pin_phase_left;
