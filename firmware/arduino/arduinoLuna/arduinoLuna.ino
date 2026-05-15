@@ -71,6 +71,7 @@ int bucket_height;
 bool pan_armed;
 bool cam_armed;
 bool bucket_armed;
+bool conveyor_armed;
 long encoder_right_count;
 long encoder_left_count;
 int8_t last_encoded_right;
@@ -105,6 +106,16 @@ static void armBucketIfNeeded() {
   bucket_armed = true;
   lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
   lin_bucket_servo.attach(BUCKET_PIN);
+}
+
+static void armConveyorIfNeeded() {
+  if (conveyor_armed) {
+    return;
+  }
+  conveyor_armed = true;
+  // Active-low conveyor: drive HIGH before enabling output to keep it off.
+  digitalWrite(DUMP_MOTOR, HIGH);
+  pinMode(DUMP_MOTOR, OUTPUT);
 }
 
 /*
@@ -220,6 +231,7 @@ void dispatchCommand(int command_id, int value) {
       break;
 
     case DUMP_MOTOR:
+      armConveyorIfNeeded();
       // Match the old conveyor node semantics: 1 = ON (active low), 0 = OFF.
       if (value != 0) {
         digitalWrite(DUMP_MOTOR, LOW);
@@ -267,6 +279,7 @@ void setup() {
   pan_armed = false;
   cam_armed = false;
   bucket_armed = false;
+  conveyor_armed = false;
   encoder_right_count = 0;
   encoder_left_count = 0;
   encoder_right_invalid = 0;
@@ -278,9 +291,8 @@ void setup() {
   pinMode(CAM_PIN, INPUT);
   pinMode(SERVO_PIN, INPUT);
 
-  // Set dump motor pin and turn off
-  digitalWrite(DUMP_MOTOR, HIGH);
-  pinMode(DUMP_MOTOR, OUTPUT);
+  // Keep conveyor input pulled high (OFF for active-low) until explicitly commanded.
+  pinMode(DUMP_MOTOR, INPUT_PULLUP);
 
   // Wheel encoders: quadrature on digital pins with internal pull-ups
   pinMode(ENCODE_R_A, INPUT_PULLUP);
