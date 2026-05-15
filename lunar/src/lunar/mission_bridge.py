@@ -87,6 +87,13 @@ class MissionBridgeState:
     nav_mission_state: Dict[str, Any] | None = None
     dig_sequence_state: Dict[str, Any] | None = None
     navigation_active: bool = False
+    navigation_status: Dict[str, Any] | None = None
+    navigation_status_seen: float | None = None
+    pan_angle: int = 90
+    camera_height: int = 0
+    bucket_pos: int = 0
+    bucket_vel: int = 0
+    conveyor: int = 0
     recent_logs: Deque[Dict[str, str]] = field(default_factory=lambda: deque(maxlen=30))
     trends: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=24))
     topics: Dict[str, TopicSample] = field(default_factory=dict)
@@ -216,6 +223,22 @@ def _nav_mission_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | N
     }
 
 
+def _navigation_steering_for_dashboard() -> Dict[str, Any] | None:
+    raw = _state.navigation_status
+    if not raw:
+        return None
+    age_ms = None
+    if _state.navigation_status_seen is not None:
+        age_ms = int(max(0.0, time.time() - _state.navigation_status_seen) * 1000)
+    reason = str(raw.get("plan_reason") or raw.get("gated_reason") or "")
+    return {
+        "linearX": float(raw.get("linear_x", 0.0)),
+        "angularZ": float(raw.get("angular_z", 0.0)),
+        "reason": reason,
+        "ageMs": age_ms,
+    }
+
+
 def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if not raw:
         return None
@@ -341,6 +364,7 @@ def build_snapshot() -> Dict[str, Any]:
             "mode": _state.mode,
             "state": _state.mission_state,
             "navigationActive": _state.navigation_active,
+            "navigationSteering": _navigation_steering_for_dashboard(),
             "target": "field readiness",
             "heartbeatMs": 0 if connected else None,
             "confidence": confidence,
@@ -393,8 +417,8 @@ def build_snapshot() -> Dict[str, Any]:
         "pid": {"kp": 1.0, "ki": 0.0, "kd": 0.1},
         "audit": [
             {"label": "Live bridge", "status": "ok", "detail": "WebSocket snapshot server is running"},
-            {"label": "Safe stop command path", "status": "ok", "detail": "ESTOP/manual takeover/drive stop publish zero velocity"},
-            {"label": "Robot drive watchdog", "status": "bad", "detail": "non-stop drive commands still rejected"},
+            {"label": "Safe stop command path", "status": "ok", "detail": "ESTOP/pause/manual/drive stop publish zero velocity"},
+            {"label": "Teleop drive pulses", "status": "warn", "detail": "forward/reverse/turn are short pulses (~0.35s); use keyboard TUI for sustained hold"},
             {"label": "Localization topic", "status": "ok" if odom_status == "live" else "bad", "detail": _status_for_topic(odom_sample)[1]},
             {"label": "Depth point cloud", "status": "ok" if depth_status == "live" else "bad", "detail": _status_for_topic(depth_sample)[1]},
         ],
@@ -413,9 +437,9 @@ def build_snapshot() -> Dict[str, Any]:
         },
         "rawConfig": (
             '[mission_bridge]\n'
-            'mode = "safe_commands_only"\n'
+            'mode = "operator_bridge"\n'
             f'port = {MISSION_BRIDGE_PORT}\n'
-            'command_policy = "estop_stop_manual_zone_only"\n\n'
+            'command_policy = "safety_bar_teleop_actuators_zone_nav"\n\n'
             '[topics]\n'
             'front_camera = "/camera/rgb/image_compressed"\n'
             'rear_camera = "/camera/rear/image_compressed"\n'
@@ -499,6 +523,28 @@ def _tick_system() -> None:
     _schedule_snapshot()
 
 
+def _drive_scale(speed_limit: float) -> float:
+    return max(0.0, min(100.0, float(speed_limit))) / 100.0
+
+
+def _twist_for_drive(command_name: str, speed_limit: float) -> "Any":
+    from geometry_msgs.msg import Twist
+
+    scale = _drive_scale(speed_limit)
+    linear = 35.0 * scale
+    angular = 35.0 * scale
+    msg = Twist()
+    if command_name == "forward":
+        msg.linear.x = linear
+    elif command_name == "reverse":
+        msg.linear.x = -linear
+    elif command_name == "left":
+        msg.angular.z = angular
+    elif command_name == "right":
+        msg.angular.z = -angular
+    return msg
+
+
 def _run_ros_node() -> None:
     import rclpy
     from geometry_msgs.msg import Twist
@@ -509,6 +555,8 @@ def _run_ros_node() -> None:
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import CompressedImage, PointCloud2
     from std_msgs.msg import Bool, Float32, Int16, Int32, String
+
+    from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
 
     class MissionBridgeNode(Node):
         def __init__(self):
@@ -547,12 +595,22 @@ def _run_ros_node() -> None:
             self.create_subscription(String, "/autonomy/state", self.autonomy_state_cb, 10)
             self.create_subscription(String, "/autonomy/nav_mission/state", self.nav_mission_state_cb, 10)
             self.create_subscription(String, "/autonomy/dig_sequence/state", self.dig_sequence_state_cb, 10)
-            self.pub_velocity = self.create_publisher(Twist, "cmd/velocity", 10)
+            self.create_subscription(String, "/autonomy/navigation_status", self.navigation_status_cb, 10)
+            self.pub_velocity = self.create_publisher(Twist, KEYBOARD_PUBLISHER_TOPICS["drive"], 10)
             self.pub_zone_mark = self.create_publisher(String, "/autonomy/zone_mark", 10)
             self.pub_navigation_active = self.create_publisher(Bool, "/autonomy/navigation_active", 10)
+            self.pub_autonomy = self.create_publisher(String, "/cmd/autonomy", 10)
+            self.pub_pan = self.create_publisher(Int16, KEYBOARD_PUBLISHER_TOPICS["pan"], 10)
+            self.pub_camera_height = self.create_publisher(Int16, KEYBOARD_PUBLISHER_TOPICS["camera-height"], 10)
+            self.pub_bucket_pos = self.create_publisher(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-pos"], 10)
+            self.pub_bucket_vel = self.create_publisher(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-vel"], 10)
+            self.pub_conveyor = self.create_publisher(Int16, KEYBOARD_PUBLISHER_TOPICS["conveyor"], 10)
+            self._drive_stop_timer = None
+            self._actuator_step = 5
+            self._bucket_vel_mag = 35
             self.create_timer(1.0, _tick_system)
             self.create_timer(0.05, self.process_command_queue)
-            self.get_logger().info("Mission control WebSocket bridge initialized with safe commands only")
+            self.get_logger().info("Mission control WebSocket bridge initialized")
 
         def _publish_stop_burst(self):
             stop_msg = Twist()
@@ -566,6 +624,36 @@ def _run_ros_node() -> None:
             m = Bool()
             m.data = False
             self.pub_navigation_active.publish(m)
+
+        def _publish_autonomy(self, command: str) -> None:
+            msg = String()
+            msg.data = command
+            self.pub_autonomy.publish(msg)
+
+        def _publish_int16(self, publisher, value: int) -> None:
+            msg = Int16()
+            msg.data = int(value)
+            publisher.publish(msg)
+
+        def _cancel_drive_stop_timer(self) -> None:
+            if self._drive_stop_timer is not None:
+                self._drive_stop_timer.cancel()
+                self._drive_stop_timer = None
+
+        def _schedule_drive_stop(self) -> None:
+            self._cancel_drive_stop_timer()
+            self._drive_stop_timer = self.create_timer(0.35, self._drive_stop_once)
+
+        def _drive_stop_once(self) -> None:
+            self._cancel_drive_stop_timer()
+            self._publish_stop_burst()
+
+        def _publish_drive_pulse(self, command_name: str, speed_limit: float) -> None:
+            twist = _twist_for_drive(command_name, speed_limit)
+            self.pub_velocity.publish(twist)
+            _state.baseline_vel = float(twist.linear.x)
+            _state.touch_topic("cmd/velocity")
+            self._schedule_drive_stop()
 
         def _command_result(self, command: QueuedCommand, accepted: bool, message: str) -> None:
             result = {
@@ -599,10 +687,22 @@ def _run_ros_node() -> None:
                 _state.mission_state = "ESTOP"
                 _state.stop_reason = "Operator ESTOP command accepted by mission bridge."
                 _state.last_decision = "Published zero velocity on cmd/velocity."
-                _state.next_transition = "Reset must be handled robot-side after physical safety check."
+                _state.next_transition = "Clear ESTOP after physical safety check, then Resume."
+                self._cancel_drive_stop_timer()
                 self._publish_stop_burst()
+                self._publish_autonomy("estop")
                 self._clear_navigation_active()
-                self._command_result(queued, True, "ESTOP accepted. Published zero velocity burst.")
+                self._command_result(queued, True, "ESTOP accepted. Published zero velocity burst and /cmd/autonomy estop.")
+                return
+
+            if command_type == "clear_estop":
+                _state.estop = False
+                _state.mode = "Manual"
+                _state.mission_state = "PAUSED"
+                _state.stop_reason = "ESTOP cleared from dashboard; supervisor reset requested."
+                _state.last_decision = "Published /cmd/autonomy reset."
+                self._publish_autonomy("reset")
+                self._command_result(queued, True, "ESTOP cleared locally. Published /cmd/autonomy reset.")
                 return
 
             if command_type == "manual_takeover":
@@ -612,7 +712,9 @@ def _run_ros_node() -> None:
                 _state.stop_reason = "Manual takeover requested by operator."
                 _state.last_decision = "Autonomy paused and zero velocity published."
                 _state.next_transition = "Operator may teleop after verifying robot state."
+                self._cancel_drive_stop_timer()
                 self._publish_stop_burst()
+                self._publish_autonomy("manual")
                 self._clear_navigation_active()
                 self._command_result(queued, True, "Manual takeover accepted. Published zero velocity burst.")
                 return
@@ -623,18 +725,111 @@ def _run_ros_node() -> None:
                 _state.mission_state = "PAUSED"
                 _state.stop_reason = "Autonomy paused by operator."
                 _state.last_decision = "Published zero velocity on pause."
+                self._cancel_drive_stop_timer()
                 self._publish_stop_burst()
+                self._publish_autonomy("pause")
                 self._clear_navigation_active()
                 self._command_result(queued, True, "Pause accepted. Published zero velocity burst.")
                 return
 
             if command_type == "drive" and command.get("command") == "stop":
+                self._cancel_drive_stop_timer()
                 _state.armed = False
                 _state.mode = "Manual"
                 _state.last_decision = "Drive stop command accepted."
                 self._publish_stop_burst()
                 self._clear_navigation_active()
                 self._command_result(queued, True, "Drive stop accepted. Published zero velocity burst.")
+                return
+
+            if command_type == "drive":
+                if _state.estop:
+                    self._command_result(queued, False, "Rejected: ESTOP is active.")
+                    return
+                drive_cmd = str(command.get("command", ""))
+                if drive_cmd not in ("forward", "reverse", "left", "right"):
+                    self._command_result(queued, False, f"Rejected unknown drive command: {drive_cmd!r}")
+                    return
+                speed_limit = float(command.get("speedLimit", 30))
+                self._publish_drive_pulse(drive_cmd, speed_limit)
+                self._command_result(
+                    queued,
+                    True,
+                    f"Drive {drive_cmd} pulse accepted (~0.35s at {speed_limit:.0f}% scale). Use lunar keyboard for sustained hold.",
+                )
+                return
+
+            if command_type == "actuator":
+                if _state.estop:
+                    self._command_result(queued, False, "Rejected: ESTOP is active.")
+                    return
+                target = str(command.get("target", ""))
+                action = str(command.get("action", ""))
+                step = int(command.get("step") or self._actuator_step)
+                if target == "pan":
+                    if action == "increment":
+                        _state.pan_angle = clamp_pan_angle(_state.pan_angle + step)
+                    elif action == "decrement":
+                        _state.pan_angle = clamp_pan_angle(_state.pan_angle - step)
+                    elif action == "stop":
+                        _state.pan_angle = 0
+                    else:
+                        self._command_result(queued, False, f"Unsupported pan action: {action}")
+                        return
+                    self._publish_int16(self.pub_pan, _state.pan_angle)
+                    self._command_result(queued, True, f"Pan -> {_state.pan_angle} deg on {KEYBOARD_PUBLISHER_TOPICS['pan']}.")
+                    return
+                if target == "camera_height":
+                    if action == "increment":
+                        _state.camera_height = max(0, min(100, _state.camera_height + step))
+                    elif action == "decrement":
+                        _state.camera_height = max(0, min(100, _state.camera_height - step))
+                    elif action == "stop":
+                        pass
+                    else:
+                        self._command_result(queued, False, f"Unsupported camera_height action: {action}")
+                        return
+                    self._publish_int16(self.pub_camera_height, _state.camera_height)
+                    self._command_result(queued, True, f"Camera height -> {_state.camera_height}.")
+                    return
+                if target == "bucket_pos":
+                    if action == "increment":
+                        _state.bucket_pos = max(0, min(100, _state.bucket_pos + step))
+                    elif action == "decrement":
+                        _state.bucket_pos = max(0, min(100, _state.bucket_pos - step))
+                    elif action == "stop":
+                        pass
+                    else:
+                        self._command_result(queued, False, f"Unsupported bucket_pos action: {action}")
+                        return
+                    self._publish_int16(self.pub_bucket_pos, _state.bucket_pos)
+                    self._command_result(queued, True, f"Bucket position -> {_state.bucket_pos}.")
+                    return
+                if target == "bucket_vel":
+                    if action == "increment":
+                        _state.bucket_vel = self._bucket_vel_mag
+                    elif action == "decrement":
+                        _state.bucket_vel = -self._bucket_vel_mag
+                    elif action == "stop":
+                        _state.bucket_vel = 0
+                    else:
+                        self._command_result(queued, False, f"Unsupported bucket_vel action: {action}")
+                        return
+                    self._publish_int16(self.pub_bucket_vel, _state.bucket_vel)
+                    self._command_result(queued, True, f"Bucket velocity -> {_state.bucket_vel}.")
+                    return
+                if target == "conveyor":
+                    if action == "toggle":
+                        _state.conveyor = 0 if _state.conveyor else 1
+                    elif action == "stop":
+                        _state.conveyor = 0
+                    else:
+                        self._command_result(queued, False, f"Unsupported conveyor action: {action}")
+                        return
+                    self._publish_int16(self.pub_conveyor, _state.conveyor)
+                    self._command_result(queued, True, f"Conveyor -> {_state.conveyor}.")
+                    return
+                self._command_result(queued, False, f"Unknown actuator target: {target}")
                 return
 
             if command_type == "set_navigation_active":
@@ -695,14 +890,39 @@ def _run_ros_node() -> None:
                 return
 
             if command_type == "resume_autonomy":
-                self._command_result(queued, False, "Resume autonomy rejected. Autonomy supervisor is not connected yet.")
+                if _state.estop:
+                    self._command_result(
+                        queued,
+                        False,
+                        "Rejected: ESTOP is active. Clear ESTOP after a physical safety check, then Resume.",
+                    )
+                    return
+                _state.armed = False
+                _state.mode = "Manual"
+                _state.stop_reason = "Supervisor reset requested from dashboard."
+                _state.last_decision = "Published /cmd/autonomy reset."
+                _state.next_transition = "Supervisor re-runs readiness; arm when zones and health allow."
+                self._publish_autonomy("reset")
+                self._command_result(
+                    queued,
+                    True,
+                    "Resume requested via /cmd/autonomy reset. Motion still gated by supervisor allow_motion.",
+                )
+                return
+
+            if command_type in ("payload", "pid", "recording", "save_map"):
+                self._command_result(
+                    queued,
+                    False,
+                    f"Rejected {command_type}. Use lunar CLI (run dig, nav-dig, keyboard, run session) for payload, bags, maps, and PID.",
+                )
                 return
 
             rejected = command_type or "unknown"
             self._command_result(
                 queued,
                 False,
-                f"Rejected {rejected} command. Only ESTOP, pause, manual takeover, drive stop, zone marking, and set_navigation_active are enabled.",
+                f"Rejected unknown command type: {rejected}.",
             )
 
         def camera_cb(self, topic: str, msg):

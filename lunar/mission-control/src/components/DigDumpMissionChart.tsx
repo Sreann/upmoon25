@@ -106,7 +106,7 @@ const CY = VB / 2
 const R = 198
 const NODE_R = 30
 
-/** Circular dig/dump mission architecture (target FSM — not fully executed on-robot yet). */
+/** Circular dig/dump mission architecture (supervisor states; dig/nav nodes run subsets). */
 export function DigDumpMissionChart({ current }: { current: MissionState }) {
   const n = MAIN_FLOW.length
   const mainIdx = MAIN_FLOW.indexOf(current)

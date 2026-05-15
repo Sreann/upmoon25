@@ -86,6 +86,13 @@ export type DigSequenceSnapshot = {
   terrainGateReverse?: string
 }
 
+export type NavigationSteeringSnapshot = {
+  linearX: number
+  angularZ: number
+  reason: string
+  ageMs: number | null
+}
+
 export type MissionSnapshot = {
   connected: boolean
   armed: boolean
@@ -94,6 +101,8 @@ export type MissionSnapshot = {
   state: MissionState
   /** When true, bridge published /autonomy/navigation_active for short-segment nav (stack must still gate motion). */
   navigationActive?: boolean
+  /** Latest short-segment nav corridor output when navigation stack is running. */
+  navigationSteering?: NavigationSteeringSnapshot | null
   /** Start→dig nav mission (optional; live bridge forwards ``/autonomy/nav_mission/state``). */
   navMission?: NavMissionSnapshot | null
   /** ``dig_sequence`` node FSM (optional; live bridge forwards ``/autonomy/dig_sequence/state``). */
@@ -234,8 +243,13 @@ export type DriveCommand = 'forward' | 'reverse' | 'left' | 'right' | 'stop'
 
 export type PayloadCommand = 'dig_start' | 'dig_stop' | 'dump_start' | 'dump_stop' | 'stow' | 'abort'
 
+export type ActuatorTarget = 'pan' | 'camera_height' | 'bucket_pos' | 'bucket_vel' | 'conveyor'
+
+export type ActuatorAction = 'increment' | 'decrement' | 'stop' | 'toggle'
+
 export type RobotCommand =
   | { type: 'estop' }
+  | { type: 'clear_estop' }
   | { type: 'pause_autonomy' }
   | { type: 'resume_autonomy' }
   | { type: 'manual_takeover' }
@@ -243,6 +257,7 @@ export type RobotCommand =
   | { type: 'payload'; command: PayloadCommand }
   | { type: 'mark_zone'; zone: FieldZone['id']; pick?: { frameId: 'base_link'; x: number; y: number } }
   | { type: 'set_navigation_active'; active: boolean }
+  | { type: 'actuator'; target: ActuatorTarget; action: ActuatorAction; step?: number }
   | { type: 'recording'; enabled: boolean; name?: string }
   | { type: 'save_map'; name: string }
   | { type: 'pid'; gains: PidGains }

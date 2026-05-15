@@ -13,6 +13,7 @@ export class MockRobotBridge implements RobotBridge {
     Record<FieldZone['id'], Pick<FieldZone, 'status' | 'detail' | 'odom_x' | 'odom_y'>>
   > = {}
   private navigationActive = false
+  private estop = false
 
   constructor(scenario: DemoScenario = 'degraded', onMarkUpdate?: () => void) {
     this.scenario = scenario
@@ -29,7 +30,13 @@ export class MockRobotBridge implements RobotBridge {
     return {
       ...base,
       zones,
-      mission: { ...base.mission, navigationActive: this.navigationActive },
+      mission: {
+        ...base.mission,
+        navigationActive: this.navigationActive,
+        estop: this.estop,
+        mode: this.estop ? 'Estop' : base.mission.mode,
+        state: this.estop ? 'ESTOP' : base.mission.state,
+      },
     }
   }
 
@@ -38,6 +45,34 @@ export class MockRobotBridge implements RobotBridge {
       return {
         accepted: false,
         message: 'Robot bridge is offline. Only local ESTOP UI state can be changed.',
+      }
+    }
+
+    if (command.type === 'estop') {
+      this.estop = true
+      this.navigationActive = false
+      this.onMarkUpdate?.()
+      return {
+        accepted: true,
+        message: 'ESTOP (mock). Switch to Live bridge for robot commands.',
+        commandId: crypto.randomUUID(),
+      }
+    }
+
+    if (command.type === 'clear_estop') {
+      this.estop = false
+      this.onMarkUpdate?.()
+      return { accepted: true, message: 'ESTOP cleared (mock).', commandId: crypto.randomUUID() }
+    }
+
+    if (this.estop) {
+      return { accepted: false, message: 'Rejected: ESTOP is active (mock).' }
+    }
+
+    if (command.type === 'payload') {
+      return {
+        accepted: false,
+        message: 'Payload macros are mock-only demos; use lunar run dig / nav-dig on the robot.',
       }
     }
 

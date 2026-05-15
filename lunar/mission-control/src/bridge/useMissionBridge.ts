@@ -1,36 +1,14 @@
 import { useEffect, useMemo, useReducer, useState } from 'react'
+import { resolveMissionWsUrl } from './bridgeWsUrls'
+import { commandDisabledReason, type BridgeMode } from './bridgeCapabilities'
 import { createMockSnapshot, type DemoScenario } from './mockSnapshot'
 import { LiveRobotBridgeClient, type LiveBridgeStatus } from './liveBridge'
 import { MockRobotBridge } from './robotBridge'
 import type { CommandResult, MissionControlSnapshot, RobotCommand } from './types'
 
-type BridgeMode = 'mock' | 'live'
-
-/** Match `lunar mission-bridge` default: same host as the page, port 8770. */
-function resolveMissionWsUrl(): string | undefined {
-  if (
-    import.meta.env.VITE_MISSION_WS_DISABLE === '1' ||
-    import.meta.env.VITE_MISSION_WS_DISABLE === 'true'
-  ) {
-    return undefined
-  }
-  if (import.meta.env.VITE_FORCE_MOCK === '1' || import.meta.env.VITE_FORCE_MOCK === 'true') {
-    return undefined
-  }
-  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('mock') === '1') {
-    return undefined
-  }
-  const env = (import.meta.env.VITE_MISSION_WS_URL as string | undefined)?.trim()
-  if (env) return env
-  if (typeof window === 'undefined') return undefined
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  return `${proto}//${window.location.hostname}:8770/mission/ws`
-}
-
 export function useMissionBridge(scenario: DemoScenario) {
   const [liveUrl] = useState(() => resolveMissionWsUrl())
-  /** Default mock so zone marking and map picks work without mission_bridge; switch to Live when ROS is up. */
-  const [mode, setMode] = useState<BridgeMode>('mock')
+  const [mode, setMode] = useState<BridgeMode>(() => (liveUrl ? 'live' : 'mock'))
   const [liveSnapshot, setLiveSnapshot] = useState<MissionControlSnapshot>(() => createMockSnapshot(scenario))
   const [liveStatus, setLiveStatus] = useState<LiveBridgeStatus>({
     connected: false,
@@ -59,6 +37,10 @@ export function useMissionBridge(scenario: DemoScenario) {
   }, [liveBridge, mode])
 
   async function sendCommand(command: RobotCommand): Promise<CommandResult> {
+    const blocked = commandDisabledReason(mode, command)
+    if (blocked) {
+      return { accepted: false, message: blocked }
+    }
     if (mode === 'live' && liveBridge) {
       return liveBridge.sendCommand(command)
     }
