@@ -21,7 +21,7 @@ import serial.tools.list_ports
 
 from .config import Config, CONFIG_PATH, find_repo_root
 from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
-from .process import spawn, save_state, kill_all
+from .process import kill_all, save_state, spawn
 from .run_session import append_process_banner, bag_record_command, create_run_session, write_run_meta
 
 app = typer.Typer(add_completion=False)
@@ -363,6 +363,32 @@ def _force_cleanup_runtime_processes() -> list[str]:
             pass
 
     return msgs
+
+
+def _run_shell_foreground_tee(shell_cmd: str, log_path: Path) -> int:
+    """Run a shell pipeline in the foreground; mirror stdout+stderr to ``log_path`` and the terminal."""
+    proc = subprocess.Popen(
+        shell_cmd,
+        shell=True,
+        executable="/bin/bash",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=os.environ.copy(),
+    )
+    assert proc.stdout is not None
+    try:
+        with log_path.open("a", encoding="utf-8") as logf:
+            for line in iter(proc.stdout.readline, ""):
+                logf.write(line)
+                sys.stdout.write(line)
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+    return int(proc.wait() or 0)
 
 
 def _ros_publish_message(topic: str, msg, count: int, rate: int = 10, wait_for_subscribers: float = 0.75) -> None:
@@ -938,8 +964,8 @@ def run(
             "- nav-dig: Same as nav, plus dig_sequence in the background waiting on /autonomy/dig_arm "
             "(nav profile transitions into dig when the mission reaches dig handoff). "
             "Requires --calibrated-rotary.\n"
-            "- dig: Dig autonomy alone — foreground dig_sequence (use after robot is up; "
-            "for nav→dig use nav-dig instead).\n\n"
+            "- dig: Dig autonomy alone — foreground ``dig_sequence`` (use after robot is up; "
+            "for nav→dig use nav-dig instead). Writes ``.lunar/runs/...`` logs and optional rosbag like other profiles.\n\n"
             "Other profiles:\n"
             "- rc: Joystick / RViz (optional --record).\n"
             "- autonomy: Planner / transport / command stack.\n"
@@ -950,7 +976,7 @@ def run(
     session_bag: bool = typer.Option(
         True,
         "--session-bag/--no-session-bag",
-        help="Write a curated ros2 bag under `.lunar/runs/<session>/rosbag/` (nav / robot / nav-dig / …). "
+        help="Write a curated ros2 bag under `.lunar/runs/<session>/rosbag/` (robot / nav / nav-dig / dig / …). "
         "Disable for long robot-only sessions or when disk space is tight.",
     ),
     session_bag_depth: bool = typer.Option(
@@ -979,11 +1005,12 @@ def run(
     Execute high-level system profiles.
 
     **robot**, **nav**, and **nav-dig** (plus rc / autonomy / test-encoder) run ROS nodes in the
-    background until `lunar kill`. **dig** runs `dig_sequence` in the foreground. Use **nav-dig**
-    when you want the navigation autonomy profile to hand off into the dig profile via
-    `/autonomy/dig_arm` at the dig zone.
+    background until `lunar kill`. **dig** runs ``dig_sequence`` in the foreground and still
+    writes a session folder (``combined.log``, ``RUN_META.txt``, optional ``rosbag/``) like
+    other profiles. Use **nav-dig** when you want the navigation autonomy profile to hand off
+    into the dig profile via ``/autonomy/dig_arm`` at the dig zone.
 
-    Each background ``lunar run`` creates a timestamped folder under ``.lunar/runs/`` with
+    Each ``lunar run`` (including **dig**) creates a timestamped folder under ``.lunar/runs/`` with
     ``combined.log`` (all spawned process output), ``RUN_META.txt``, optional ``rosbag/``
     (``--session-bag``), and ``README.txt``. ``.lunar/runs/latest`` symlinks to the newest session.
     """
@@ -1059,8 +1086,7 @@ def run(
         if side not in ("left", "right"):
             typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
-        ensure_env()
-        dig_cmd = [
+        dig_cmd_list = [
             "ros2",
             "run",
             "backend",
@@ -1071,15 +1097,80 @@ def run(
             "-p",
             f"encoder_side:={side}",
         ]
+        dig_shell_cmd = " ".join(shlex.quote(x) for x in dig_cmd_list)
+
         if dry_run:
-            typer.echo(" ".join(shlex.quote(x) for x in dig_cmd))
+            typer.echo(dig_shell_cmd)
+            if session_bag:
+                bag_preview = bag_record_command(
+                    root,
+                    root / ".lunar" / "runs" / "(dry-run)",
+                    _ros_source_env_chain(root),
+                    "dig",
+                    include_depth=session_bag_depth,
+                )
+                typer.echo(f"[session_rosbag] {bag_preview}")
             return
 
+        typer.echo("Stopping existing lunar/ROS processes...")
+        cleanup_msgs = _force_cleanup_runtime_processes()
+        for msg in cleanup_msgs:
+            typer.echo(msg)
+        time.sleep(0.5)
+
+        ensure_env()
+
         typer.secho(
-            "Starting dig sequence in the foreground... (Ctrl-C to abort; ensure lunar run robot already.)",
+            "Starting dig sequence in the foreground... (Ctrl-C to abort; ensure `lunar run robot` is already up.)",
             fg=typer.colors.YELLOW,
         )
-        subprocess.run(dig_cmd, check=False)
+
+        session_dir, combined_log = create_run_session(root, profile.value)
+        ros_chain = _ros_source_env_chain(root)
+        meta_cmds: list[tuple[str, str]] = []
+        bag_cmd_str = ""
+        if session_bag:
+            bag_cmd_str = bag_record_command(
+                root,
+                session_dir,
+                ros_chain,
+                "dig",
+                include_depth=session_bag_depth,
+            )
+            meta_cmds.append(("session_rosbag", bag_cmd_str))
+        meta_cmds.append(("dig_sequence", dig_shell_cmd))
+
+        write_run_meta(
+            session_dir,
+            root,
+            profile=profile.value,
+            commands=meta_cmds,
+            session_bag=bool(session_bag),
+            session_bag_depth=session_bag_depth,
+        )
+
+        try:
+            if session_bag:
+                typer.echo(f"[session] Starting ros2 bag → {session_dir / 'rosbag'}")
+                append_process_banner(combined_log, "session_rosbag", bag_cmd_str)
+                save_state([spawn("session_rosbag", bag_cmd_str, log_file=combined_log)])
+
+            append_process_banner(combined_log, "dig_sequence", dig_shell_cmd)
+            typer.echo(f"Session folder: {session_dir}")
+            typer.echo(f"Combined log: {combined_log}")
+            if session_bag:
+                typer.echo(
+                    f"Rosbag: {session_dir / 'rosbag'} "
+                    f"(curated dig topics; add --session-bag-depth for /camera/depth/points)"
+                )
+
+            _run_shell_foreground_tee(dig_shell_cmd, combined_log)
+        except KeyboardInterrupt:
+            typer.echo("\nStopped dig (KeyboardInterrupt).")
+        finally:
+            kill_all()
+
+        typer.echo(f"Dig session finished. Logs under {session_dir}")
         return
 
     if dry_run:

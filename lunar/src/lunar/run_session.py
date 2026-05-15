@@ -109,6 +109,22 @@ def ros_bag_topics(profile: str, *, include_depth: bool) -> list[str]:
                 "/autonomy/dig_sequence/state",
             ]
         )
+    if profile == "dig":
+        topics.extend(
+            [
+                "/autonomy/dig_sequence/state",
+                "/autonomy/dig_arm",
+                "/sensor/encoder/left",
+                "/sensor/encoder/right",
+                "/sensor/ir/left",
+                "/sensor/ir/right",
+                "/cmd/bucket_pos",
+                "/cmd/bucket_vel",
+                "/cmd/conveyor",
+                "/camera/rgb/image_compressed",
+                "/camera/rear/image_compressed",
+            ]
+        )
     if include_depth:
         topics.append("/camera/depth/points")
     # de-dupe preserving order
