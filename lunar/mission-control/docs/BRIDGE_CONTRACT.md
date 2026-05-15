@@ -35,7 +35,14 @@ Current implementation:
 lunar mission-bridge --foreground
 ```
 
-This starts the first safe-command bridge at `ws://0.0.0.0:8770/mission/ws`. It streams the snapshot contract and accepts only ESTOP, pause, manual takeover, drive stop, and zone marking. It rejects normal drive motion, payload, PID, map save, and autonomy resume until the command watchdog layer exists.
+This starts the operator bridge at `ws://0.0.0.0:8770/mission/ws`. It streams the snapshot contract (including `/autonomy/navigation_status` as `mission.navigationSteering`) and accepts:
+
+- Safety: `estop`, `clear_estop`, `pause_autonomy`, `manual_takeover`, `resume_autonomy` (publishes `/cmd/autonomy`)
+- Motion: `drive` stop always; forward/reverse/turn as **short pulses** (~0.35s) on `cmd/velocity` (use `lunar keyboard` for sustained hold)
+- Actuators: `actuator` on `/cmd/pan`, `/cmd/camera_height`, `/cmd/bucket_pos`, `/cmd/bucket_vel`, `/cmd/conveyor`
+- Field: `mark_zone`, `set_navigation_active`
+
+Rejected on the live bridge (use CLI instead): `payload`, `recording`, `save_map`, `pid`.
 
 ## Snapshot Message
 

@@ -1,6 +1,6 @@
 # Operator Handoff
 
-This app is currently safe to open because it uses mock data by default.
+The dashboard defaults to **Live bridge** when port `8770` is reachable on the same host. Use **Mock bridge** in the header for UI rehearsal without ROS.
 
 ## Run
 
@@ -31,7 +31,7 @@ The UI should remain readable and safe in all three modes.
 
 ## Live Bridge Mode
 
-Live mode is disabled unless `VITE_MISSION_WS_URL` is set.
+Live mode auto-resolves to `ws://<host>:8770/mission/ws` unless `VITE_MISSION_WS_DISABLE=1` or `?mock=1`. Override with `VITE_MISSION_WS_URL` if needed.
 
 Example:
 

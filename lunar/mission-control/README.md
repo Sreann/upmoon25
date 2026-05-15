@@ -32,7 +32,7 @@ VITE_CAMERA_WS_BASE_URL=ws://ROBOT_OR_LAPTOP_IP:8767
 
 `VITE_MISSION_WS_URL` drives the typed mission snapshot and safe command acknowledgements. `VITE_CAMERA_WS_BASE_URL` reuses the existing camera frame WebSocket at `/camera/ws/rgb` and `/camera/ws/rear`.
 
-The dashboard **defaults to Mock bridge** so zone marking and map picks work without `mission_bridge` running; switch the header control to **Live bridge** when ROS is up.
+**`lunar dashboard`** (from repo root, with ROS running) starts the UI plus `camera_ws` and `mission_bridge`, and proxies WebSockets on the same port as the page — no `.env.local` required. Use **Mock bridge** in the header only for UI rehearsal without ROS.
 
 ## Fake data and occupancy grid (no bridge)
 
@@ -95,7 +95,7 @@ This frontend must not become a generic ROS command console. Motion, actuator, r
 
 Read [docs/BRIDGE_CONTRACT.md](docs/BRIDGE_CONTRACT.md) before wiring live ROS data.
 
-The frontend currently uses `MockRobotBridge` so UI work can continue without a robot. `lunar mission-bridge` is the first live bridge path: it streams ROS telemetry as the same `MissionControlSnapshot` shape and only accepts ESTOP, pause, manual takeover, drive stop, and zone marking. Forward/reverse/turn drive, payload, PID, map save, and autonomy resume remain rejected until the robot-side watchdog layer exists.
+The dashboard defaults to **Live bridge** when `VITE_MISSION_WS_URL` resolves (same host, port `8770`). Use **Mock bridge** in the header for UI rehearsal without ROS. `lunar mission-bridge` streams ROS telemetry as `MissionControlSnapshot` and implements safety bar commands, short drive pulses, actuators, zone marking, and short-segment nav arming. Payload macros, bag recording, map save, and PID remain CLI-only (`lunar run`, `lunar keyboard`).
 
 ## Team Split
 

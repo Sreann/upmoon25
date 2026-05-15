@@ -6,6 +6,8 @@ services:
     ports:
       - "8501:8501"
       - "8765:8765"
+      - "8767:8767"
+      - "8770:8770"
     environment:
       - ROS_DOMAIN_ID=25
     volumes:
