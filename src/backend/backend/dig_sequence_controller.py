@@ -28,7 +28,8 @@ The conveyor (``cmd/conveyor``) is commanded **only** during each dump timer win
 explicitly zeroed outside ``CONVEYOR_DUMP`` so it restarts cleanly every cycle.
 
 The post-dump bucket position bump uses the same optional IR gate as setup (unless
-``ir_bucket_gate_min_ir_drop`` is ``0``).
+``ir_bucket_gate_min_ir_drop`` is ``0``). When that gate is active, ``phase_clock`` is reset so
+``phase_timeout_sec`` applies to the gate wait separately from the conveyor dump window.
 
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
@@ -633,7 +634,11 @@ class DigSequenceController(Node):
             self._ir_bucket_gate_waiting = True
             self._ir_anchor_before_last_bucket_step = int(self.ir_value)
             self._ir_bucket_gate_t0 = time.monotonic()
-            self.get_logger().info("Dump timer elapsed; conveyor off — gating post-dump bucket bump on IR.")
+            self._reset_phase_clock()
+            self.get_logger().info(
+                "Dump timer elapsed; conveyor off — gating post-dump bucket bump on IR "
+                f"(phase_timeout budget restarted, {self.phase_timeout_sec} s)."
+            )
             return
 
         self._apply_post_cycle_bump_and_maybe_repeat()
