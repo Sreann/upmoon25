@@ -110,6 +110,7 @@ def test_dig_sequence_state_contract_keys():
         "dig_arm": False,
         "ir_value": 10,
         "ir_target": 17,
+        "ir_setup_mode": "le",
         "encoder_value": 50,
         "encoder_target": 120,
         "encoder_topic": "/sensor/encoder/left",

@@ -1,5 +1,7 @@
 """Offline-testable helpers for dig_sequence drive completion (used by dig_sequence_controller)."""
 
+from __future__ import annotations
+
 
 def ros_param_non_negative_int(raw: object) -> int:
     """
@@ -32,6 +34,39 @@ def timed_leg_complete(elapsed_sec: float, timed_drive_ms: int) -> bool:
     if timed_drive_ms <= 0:
         return False
     return elapsed_sec * 1000.0 >= float(timed_drive_ms)
+
+
+def ir_setup_stop_eq(ir_value: int, ir_target: int) -> bool:
+    """Legacy IR setup: stop only on exact integer equality."""
+    return int(ir_value) == int(ir_target)
+
+
+def ir_setup_stop_le(
+    ir_value: int,
+    ir_target: int,
+    bucket_pos_commanded: int,
+    bucket_start_pos: int,
+    was_above_target: bool,
+) -> tuple[bool, bool]:
+    """
+    Typical dig: lowering the bucket lowers the IR reading toward ``ir_target``
+    (e.g. IR ~70 initially, crosses down through ``ir_target`` 17).
+
+    Stop when IR is **at or below** ``ir_target`` after priming: we observed IR **above``
+    ``ir_target`` at least once, or ``bucket_pos`` has stepped past ``bucket_start_pos``.
+    ``ir_value < 0`` is treated as no reading yet (startup sentinel -1 won't stop).
+
+    Returns ``(stop_lowering_now, new_was_above_target)``.
+    """
+    iv = int(ir_value)
+    it = int(ir_target)
+    new_above = bool(was_above_target) or (iv > it)
+    if iv < 0:
+        return False, new_above
+    bp = int(bucket_pos_commanded)
+    bs = int(bucket_start_pos)
+    primed = new_above or (bp > bs)
+    return bool(iv <= it and primed), new_above
 
 
 def encoder_forward_target_reached(

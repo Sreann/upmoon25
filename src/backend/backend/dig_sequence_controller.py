@@ -13,6 +13,11 @@ If IR reaches the target first, bucket chain stops for the drive phases. If the 
 position safety cap is reached first (without IR), bucket chain stays on until the full
 sequence ends (abort / timeout / normal completion).
 
+By default ``ir_setup_mode`` is ``le``: IR is expected to **decrease** toward ``ir_target``
+(e.g. from ~70 while high to 17 at depth). The setup phase stops when IR is **less than or equal
+to** ``ir_target``, after it has been **above** ``ir_target`` or the bucket has stepped past
+``bucket_start_pos``. Use ``ir_setup_mode:=eq`` for the legacy exact IR match.
+
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
 when the encoder reads ~zero.
@@ -40,6 +45,8 @@ from std_msgs.msg import Bool, Int16, Int32, String
 from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
+    ir_setup_stop_eq,
+    ir_setup_stop_le,
     merge_timed_drive_ms,
     ros_param_non_negative_int,
     timed_leg_complete,
@@ -69,6 +76,7 @@ class DigSequenceController(Node):
         self.declare_parameter("encoder_side", "left")
         self.declare_parameter("encoder_tolerance", 2)
         self.declare_parameter("forward_encoder_increases", True)
+        self.declare_parameter("ir_setup_mode", "le")
         self.declare_parameter("ir_target", 17)
         self.declare_parameter("bucket_start_pos", 20)
         self.declare_parameter("bucket_safety_stop", 34)
@@ -105,6 +113,11 @@ class DigSequenceController(Node):
         self.encoder_tolerance = max(0, int(self.get_parameter("encoder_tolerance").value))
         self.forward_encoder_increases = bool(self.get_parameter("forward_encoder_increases").value)
         self.ir_target = int(self.get_parameter("ir_target").value)
+        _irm = str(self.get_parameter("ir_setup_mode").value).strip().lower()
+        if _irm not in {"le", "eq"}:
+            self.get_logger().warn("ir_setup_mode must be 'le' or 'eq'; defaulting to 'le'.")
+            _irm = "le"
+        self.ir_setup_mode = _irm
         self.bucket_start_pos = int(self.get_parameter("bucket_start_pos").value)
         self.bucket_safety_stop = int(self.get_parameter("bucket_safety_stop").value)
         self.bucket_chain_speed = int(self.get_parameter("bucket_chain_speed").value)
@@ -165,6 +178,7 @@ class DigSequenceController(Node):
         self.bucket_pos_commanded = self.bucket_start_pos
         self.cycle_counter = 0
         self.setup_complete = False
+        self._ir_setup_was_above_target = False
         # True if setup exited via bucket_safety_stop: dig motor stays on until sequence ends (not IR-hit path).
         self.keep_bucket_chain_until_done = False
 
@@ -175,7 +189,8 @@ class DigSequenceController(Node):
         else:
             fwd_desc = f"encoder forward target {self.calibrated_rotary} on {self.encoder_topic}"
         self.get_logger().info(
-            f"dig_sequence start (state={self.state.name}): IR→{self.ir_target}, bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
+            f"dig_sequence start (state={self.state.name}): IRMode={self.ir_setup_mode}, IR→{self.ir_target}, "
+            f"bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
             f"{fwd_desc}, repeat while counter<={self.max_cycles_le}, {ginfo}"
         )
 
@@ -286,6 +301,7 @@ class DigSequenceController(Node):
             "dig_arm": bool(self._nav_dig_arm),
             "ir_value": int(self.ir_value),
             "ir_target": int(self.ir_target),
+            "ir_setup_mode": self.ir_setup_mode,
             "encoder_value": int(self.encoder_value),
             "encoder_target": int(self.calibrated_rotary),
             "encoder_topic": self.encoder_topic,
@@ -362,11 +378,29 @@ class DigSequenceController(Node):
             self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
             self.setup_complete = True
+            self._ir_setup_was_above_target = False
             self.ir_last_step_time = self.get_clock().now()
 
-        if self.ir_value == self.ir_target:
+        if self.ir_setup_mode == "eq":
+            ir_met = ir_setup_stop_eq(self.ir_value, self.ir_target)
+        else:
+            ir_met, self._ir_setup_was_above_target = ir_setup_stop_le(
+                self.ir_value,
+                self.ir_target,
+                self.bucket_pos_commanded,
+                self.bucket_start_pos,
+                self._ir_setup_was_above_target,
+            )
+
+        if ir_met:
             self.keep_bucket_chain_until_done = False
-            self.get_logger().info("IR target reached; stopping bucket chain.")
+            if self.ir_setup_mode == "eq":
+                self.get_logger().info("IR exact match at target; stopping bucket chain.")
+            else:
+                self.get_logger().info(
+                    f"IR reached at-or-below target (ir_value={self.ir_value}, "
+                    f"ir_target={self.ir_target}); stopping bucket chain."
+                )
             self.pub_bucket_vel.publish(Int16(data=0))
             self._stop_motion()
             self.state = DigState.DRIVE_FORWARD
@@ -375,8 +409,17 @@ class DigSequenceController(Node):
 
         if self.bucket_pos_commanded >= self.bucket_safety_stop:
             self.keep_bucket_chain_until_done = True
+            if self.ir_setup_mode == "eq":
+                warn_tail = (
+                    f"(IR never matched exact ir_target={self.ir_target}; latest ir_value={self.ir_value})"
+                )
+            else:
+                warn_tail = (
+                    f"(expected IR to descend to <= {self.ir_target} after reading above target; "
+                    f"latest ir_value={self.ir_value})"
+                )
             self.get_logger().warn(
-                f"Bucket position safety stop at {self.bucket_safety_stop} (IR did not reach {self.ir_target}); "
+                f"Bucket position safety stop at {self.bucket_safety_stop} {warn_tail}; "
                 "keeping dig motors running until the sequence terminates."
             )
             self._stop_motion()

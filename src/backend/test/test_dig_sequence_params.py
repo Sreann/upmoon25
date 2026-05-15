@@ -3,10 +3,35 @@
 from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
+    ir_setup_stop_eq,
+    ir_setup_stop_le,
     merge_timed_drive_ms,
     ros_param_non_negative_int,
     timed_leg_complete,
 )
+
+
+def test_ir_setup_stop_eq_exact_only():
+    assert ir_setup_stop_eq(17, 17) is True
+    assert ir_setup_stop_eq(16, 17) is False
+
+
+def test_ir_setup_stop_le_ignores_unread_negative_one():
+    stop, above = ir_setup_stop_le(-1, 17, 20, 20, False)
+    assert stop is False and above is False
+
+
+def test_ir_setup_stop_le_high_then_at_target():
+    stop, above = ir_setup_stop_le(70, 17, 20, 20, False)
+    assert stop is False and above is True
+    stop2, above2 = ir_setup_stop_le(17, 17, 20, 20, above)
+    assert stop2 is True and above2 is True
+
+
+def test_ir_setup_stop_le_bucket_step_primes_below_target_edge():
+    # Never saw iv > 17 but bucket stepped 21 > 20
+    stop, above = ir_setup_stop_le(16, 17, 21, 20, False)
+    assert stop is True and above is False
 
 
 def test_ros_param_coerces_numeric_string_and_float():
