@@ -163,3 +163,29 @@ def test_build_snapshot_mission_dig_sequence_key_present_when_cleared():
     snap = mission_bridge.build_snapshot()
     assert "digSequence" in snap["mission"]
     assert snap["mission"]["digSequence"] is None
+
+
+def test_build_snapshot_navigation_steering_from_status():
+    mission_bridge._state.navigation_status = {
+        "linear_x": 0.12,
+        "angular_z": -0.05,
+        "plan_reason": "center_clear",
+        "gated_reason": "",
+    }
+    mission_bridge._state.navigation_status_seen = time.time()
+    snap = mission_bridge.build_snapshot()
+    steer = snap["mission"]["navigationSteering"]
+    assert steer is not None
+    assert steer["linearX"] == 0.12
+    assert steer["angularZ"] == -0.05
+    assert steer["reason"] == "center_clear"
+    assert steer["ageMs"] is not None
+    mission_bridge._state.navigation_status = None
+    mission_bridge._state.navigation_status_seen = None
+
+
+def test_drive_scale_clamps_speed_limit_percent():
+    assert mission_bridge._drive_scale(50.0) == 0.5
+    assert mission_bridge._drive_scale(0.0) == 0.0
+    assert mission_bridge._drive_scale(100.0) == 1.0
+    assert mission_bridge._drive_scale(150.0) == 1.0

@@ -2309,6 +2309,28 @@ def _camera_ws_command(root: Path) -> str:
     return cmd
 
 
+def _wait_for_tcp_ports(host: str, ports: list[int], timeout_sec: float = 20.0) -> bool:
+    """Return True when every port accepts a TCP connection (bridge processes up)."""
+    import socket
+    import time
+
+    deadline = time.monotonic() + max(0.5, float(timeout_sec))
+    pending = set(int(p) for p in ports)
+    while pending and time.monotonic() < deadline:
+        ready = set()
+        for port in pending:
+            try:
+                with socket.create_connection((host, port), timeout=0.4):
+                    ready.add(port)
+            except OSError:
+                pass
+        pending -= ready
+        if not pending:
+            return True
+        time.sleep(0.25)
+    return not pending
+
+
 def _mission_bridge_run_command(root: Path, port: int, host: str) -> str:
     """Bash command to run mission_bridge.main (MissionControlSnapshot on /mission/ws)."""
     return (
@@ -2338,19 +2360,42 @@ def _launch_vite_mission_control(
         typer.secho(f"Error: mission-control app not found at {app_dir}", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    if shutil.which("pnpm") is not None:
-        cmd = f"cd {shlex.quote(str(app_dir))} && pnpm dev --host {shlex.quote(host)} --port {int(port)}"
-        mode = "dev (pnpm + Vite)"
+    same_origin_env = "VITE_USE_SAME_ORIGIN_WS=1 " if with_robot_stack else ""
+    has_pnpm_deps = shutil.which("pnpm") is not None and (app_dir / "node_modules").is_dir()
+    if has_pnpm_deps:
+        if with_robot_stack and dist_index.is_file():
+            vite_cmd = "pnpm exec vite preview"
+        else:
+            vite_cmd = "pnpm dev"
+        cmd = (
+            f"cd {shlex.quote(str(app_dir))} && {same_origin_env}{vite_cmd} "
+            f"--host {shlex.quote(host)} --port {int(port)}"
+        )
+        mode = "preview (pnpm + Vite)" if "preview" in vite_cmd else "dev (pnpm + Vite)"
     elif dist_index.is_file():
         py = shlex.quote(sys.executable)
         dist_q = shlex.quote(str(dist_dir))
         host_q = shlex.quote(host)
-        if sys.version_info >= (3, 8):
+        if with_robot_stack:
+            serve_mod = (
+                "from lunar.mission_control_serve import main; "
+                f"main({dist_q!r}, port={int(port)}, host={host_q!r})"
+            )
+            cmd = f"{_ros_source_env_chain(root)} && {py} -c {shlex.quote(serve_mod)}"
+            mode = "static (dist/ + WebSocket proxy on :8501)"
+        elif sys.version_info >= (3, 8):
             cmd = f"cd {dist_q} && {py} -m http.server {int(port)} --bind {host_q}"
+            mode = "static (dist/ + http.server)"
         else:
             cmd = f"cd {dist_q} && {py} -m http.server {int(port)}"
-        mode = "static (dist/ + http.server)"
-        typer.secho("pnpm not found; serving pre-built mission-control from dist/.", fg=typer.colors.YELLOW)
+            mode = "static (dist/ + http.server)"
+        if with_robot_stack:
+            typer.secho(
+                "Serving mission-control from dist/ with same-origin WebSocket proxy (no pnpm).",
+                fg=typer.colors.CYAN,
+            )
+        else:
+            typer.secho("pnpm not found; serving pre-built mission-control from dist/.", fg=typer.colors.YELLOW)
     else:
         typer.secho(
             "Error: pnpm is not installed and mission-control is not built.\n"
@@ -2374,7 +2419,8 @@ def _launch_vite_mission_control(
             raise typer.Exit(1)
         ensure_env(force=True)
         typer.secho(
-            "Bundling camera_ws (:8767) + mission_bridge (:8770) for live cameras, sensors, and mission snapshot.",
+            "Bundling camera_ws (:8767) + mission_bridge (:8770); dashboard proxies them on the HTTP port "
+            f"({port}) so the browser only opens one URL.",
             fg=typer.colors.CYAN,
         )
         camera_proc = spawn("camera_ws", _camera_ws_command(root), log_file=camera_log)
@@ -2383,6 +2429,14 @@ def _launch_vite_mission_control(
             _mission_bridge_run_command(root, stack_bridge_port, stack_bridge_host),
             log_file=bridge_log,
         )
+        if not _wait_for_tcp_ports("127.0.0.1", [8767, stack_bridge_port], timeout_sec=25.0):
+            typer.secho(
+                "Warning: camera_ws (:8767) or mission_bridge (:8770) not ready yet; "
+                f"check {camera_log} and {bridge_log}. The UI will retry WebSockets.",
+                fg=typer.colors.YELLOW,
+            )
+        else:
+            typer.secho("Bridge ports :8767 and :8770 are up.", fg=typer.colors.GREEN)
 
     if background:
         proc = spawn(log_name, cmd, log_file=log_path)

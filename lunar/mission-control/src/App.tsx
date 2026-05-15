@@ -40,6 +40,8 @@ import type {
   TerrainGridSnapshot,
   ZoneMarkingSnapshot,
 } from './bridge/types'
+import type { BridgeMode } from './bridge/bridgeCapabilities'
+import { commandButtonState } from './bridge/commandGate'
 import type { DemoScenario } from './bridge/mockSnapshot'
 import { useMissionBridge } from './bridge/useMissionBridge'
 import { DigDumpMissionChart } from './components/DigDumpMissionChart'
@@ -59,6 +61,26 @@ const scenarioLabels: Record<DemoScenario, string> = {
 
 function isNominalLikeScenario(s: DemoScenario): boolean {
   return s === 'nominal' || s === 'terrain_lab'
+}
+
+function steeringMetric(snapshot: MissionControlSnapshot): Metric {
+  const nav = snapshot.mission.navigationSteering
+  if (nav) {
+    const moving = Math.abs(nav.linearX) > 0.01 || Math.abs(nav.angularZ) > 0.01
+    const age = nav.ageMs === null ? '' : ` · ${nav.ageMs} ms`
+    return {
+      label: 'Steering',
+      value: moving ? `${nav.linearX.toFixed(2)} m/s` : 'hold',
+      detail: `${nav.reason || 'navigation'}${age}`,
+      status: moving ? 'ok' : 'idle',
+    }
+  }
+  return {
+    label: 'Steering',
+    value: '--',
+    detail: '/autonomy/navigation_status',
+    status: 'idle',
+  }
 }
 
 function initialDemoScenario(): DemoScenario {
@@ -121,12 +143,14 @@ function Button({
   intent = 'default',
   className,
   disabled,
+  title,
   onClick,
 }: {
   children: React.ReactNode
   intent?: 'default' | 'danger' | 'safe' | 'warn'
   className?: string
   disabled?: boolean
+  title?: string
   onClick?: () => void
 }) {
   const styles = {
@@ -137,7 +161,9 @@ function Button({
   }
   return (
     <button
+      type="button"
       disabled={disabled}
+      title={title}
       onClick={onClick}
       className={clsx(
         'inline-flex min-h-9 items-center justify-center gap-2 rounded-md border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45',
@@ -188,13 +214,20 @@ function SafetyBar({
   snapshot: MissionControlSnapshot
   scenario: DemoScenario
   setScenario: (scenario: DemoScenario) => void
-  bridgeMode: 'mock' | 'live'
-  setBridgeMode: (mode: 'mock' | 'live') => void
+  bridgeMode: BridgeMode
+  setBridgeMode: (mode: BridgeMode) => void
   liveAvailable: boolean
   runCommand: (command: RobotCommand) => Promise<void>
 }) {
   const { mission } = snapshot
   const navOn = Boolean(mission.navigationActive)
+  const connected = mission.connected
+  const navToggle = commandButtonState(bridgeMode, connected, { type: 'set_navigation_active', active: !navOn })
+  const estopBtn = commandButtonState(bridgeMode, connected, { type: 'estop' })
+  const pauseBtn = commandButtonState(bridgeMode, connected, { type: 'pause_autonomy' })
+  const resumeBtn = commandButtonState(bridgeMode, connected, { type: 'resume_autonomy' }, mission.estop)
+  const manualBtn = commandButtonState(bridgeMode, connected, { type: 'manual_takeover' })
+  const clearEstopBtn = commandButtonState(bridgeMode, connected, { type: 'clear_estop' })
   return (
     <div className="sticky top-0 z-50 border-b border-slate-800 bg-slate-950/95 px-3 py-3 backdrop-blur sm:px-4">
       <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-3">
@@ -253,22 +286,54 @@ function SafetyBar({
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
             intent="safe"
-            disabled={!mission.connected}
+            disabled={navToggle.disabled}
+            title={navToggle.title}
             className="min-w-32"
             onClick={() => void runCommand({ type: 'set_navigation_active', active: !navOn })}
           >
             <Radio className="h-4 w-4" /> Short nav {navOn ? 'off' : 'on'}
           </Button>
-          <Button intent="danger" className="min-w-28">
+          <Button
+            intent="danger"
+            className="min-w-28"
+            disabled={estopBtn.disabled}
+            title={estopBtn.title}
+            onClick={() => void runCommand({ type: 'estop' })}
+          >
             <Power className="h-4 w-4" /> ESTOP
           </Button>
-          <Button intent="warn" disabled={!mission.connected}>
+          {mission.estop ? (
+            <Button
+              intent="warn"
+              className="min-w-32"
+              disabled={clearEstopBtn.disabled}
+              title={clearEstopBtn.title ?? 'Clear dashboard ESTOP after physical safety check'}
+              onClick={() => void runCommand({ type: 'clear_estop' })}
+            >
+              Clear ESTOP
+            </Button>
+          ) : null}
+          <Button
+            intent="warn"
+            disabled={pauseBtn.disabled}
+            title={pauseBtn.title}
+            onClick={() => void runCommand({ type: 'pause_autonomy' })}
+          >
             <Pause className="h-4 w-4" /> Pause
           </Button>
-          <Button intent="safe" disabled={!mission.connected}>
+          <Button
+            intent="safe"
+            disabled={resumeBtn.disabled}
+            title={resumeBtn.title ?? (mission.estop ? 'Clear ESTOP before resume' : undefined)}
+            onClick={() => void runCommand({ type: 'resume_autonomy' })}
+          >
             <Play className="h-4 w-4" /> Resume
           </Button>
-          <Button disabled={!mission.connected}>
+          <Button
+            disabled={manualBtn.disabled}
+            title={manualBtn.title}
+            onClick={() => void runCommand({ type: 'manual_takeover' })}
+          >
             <CircleStop className="h-4 w-4" /> Manual Takeover
           </Button>
         </div>
@@ -703,6 +768,17 @@ function App() {
   }
 
   const motionDisabled = !displaySnapshot.mission.connected
+  const drive = (command: 'forward' | 'reverse' | 'left' | 'right', speedLimit = 30) =>
+    commandButtonState(mode, displaySnapshot.mission.connected, { type: 'drive', command, speedLimit })
+  const driveStop = commandButtonState(mode, displaySnapshot.mission.connected, {
+    type: 'drive',
+    command: 'stop',
+    speedLimit: 0,
+  })
+  const actuator = (
+    target: 'pan' | 'camera_height' | 'bucket_pos' | 'bucket_vel' | 'conveyor',
+    action: 'increment' | 'decrement' | 'stop' | 'toggle',
+  ) => commandButtonState(mode, displaySnapshot.mission.connected, { type: 'actuator', target, action })
 
   const odomLive =
     displaySnapshot.zoneMarking?.odomStatus === 'live' ||
@@ -728,13 +804,19 @@ function App() {
         runCommand={runCommand}
       />
       <main className="mx-auto flex max-w-[1800px] flex-col gap-4 px-3 py-4 sm:px-4">
-        {mode === 'live' ? (
+        {mode === 'mock' ? (
+          <EmptyState
+            title="Mock bridge"
+            detail="UI rehearsal only — commands are not sent to ROS. Select Live bridge when lunar mission-bridge is running on port 8770."
+            status="warn"
+          />
+        ) : (
           <EmptyState
             title={liveStatus.connected ? 'Live bridge connected' : liveStatus.connecting ? 'Live bridge connecting' : 'Live bridge disconnected'}
             detail={liveUrl ? `${liveUrl}${liveStatus.lastError ? ` | ${liveStatus.lastError}` : ''}` : 'Set VITE_MISSION_WS_URL to enable live mode.'}
             status={liveStatus.connected ? 'ok' : liveStatus.connecting ? 'warn' : 'bad'}
           />
-        ) : null}
+        )}
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           {displaySnapshot.metrics.map((metric) => (
             <MetricCard key={metric.label} metric={metric} />
@@ -793,12 +875,12 @@ function App() {
                   <MetricCard metric={{ label: 'Obstacles', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.obstacleCells) : '--', detail: displaySnapshot.terrainGrid?.note ?? 'terrain grid', status: displaySnapshot.terrainGrid?.status === 'live' ? 'ok' : displaySnapshot.terrainGrid ? 'warn' : 'bad' }} />
                   <MetricCard metric={{ label: 'Rough / drop risk', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.cautionCells) : '--', detail: 'yellow cells (value 60)', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.cautionCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
                   <MetricCard metric={{ label: 'Unknown cells', value: displaySnapshot.terrainGrid ? String(displaySnapshot.terrainGrid.unknownCells) : '--', detail: displaySnapshot.terrainGrid?.frameId ?? 'base_link', status: displaySnapshot.terrainGrid && displaySnapshot.terrainGrid.unknownCells > 0 ? 'warn' : displaySnapshot.terrainGrid ? 'ok' : 'bad' }} />
-                  <MetricCard metric={{ label: 'Steering', value: isNominalLikeScenario(scenario) ? 'forward' : 'hold', detail: isNominalLikeScenario(scenario) ? 'short segment' : 'no target', status: isNominalLikeScenario(scenario) ? 'ok' : 'idle' }} />
+                  <MetricCard metric={steeringMetric(displaySnapshot)} />
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button disabled={motionDisabled}>Clear Map</Button>
-                  <Button disabled={motionDisabled}>Freeze</Button>
-                  <Button disabled={motionDisabled}>Toggle Hazards</Button>
+                  <Button disabled title="Terrain map editing is not wired on the dashboard yet.">Clear Map</Button>
+                  <Button disabled title="Terrain freeze is not wired on the dashboard yet.">Freeze</Button>
+                  <Button disabled title="Hazard overlay toggle is not wired on the dashboard yet.">Toggle Hazards</Button>
                 </div>
               </div>
             </div>
@@ -830,13 +912,13 @@ function App() {
               <div>
                 <div className="grid grid-cols-3 gap-2">
                   <div />
-                  <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'drive', command: 'forward', speedLimit: 30 })}><ArrowUp className="h-4 w-4" /> Fwd</Button>
+                  <Button disabled={drive('forward').disabled} title={drive('forward').title} onClick={() => void runCommand({ type: 'drive', command: 'forward', speedLimit: 30 })}><ArrowUp className="h-4 w-4" /> Fwd</Button>
                   <div />
-                  <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'drive', command: 'left', speedLimit: 30 })}><ArrowLeft className="h-4 w-4" /> Left</Button>
-                  <Button intent="danger" onClick={() => void runCommand({ type: 'drive', command: 'stop', speedLimit: 0 })}><Square className="h-4 w-4" /> Stop</Button>
-                  <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'drive', command: 'right', speedLimit: 30 })}>Right <ArrowRight className="h-4 w-4" /></Button>
+                  <Button disabled={drive('left').disabled} title={drive('left').title} onClick={() => void runCommand({ type: 'drive', command: 'left', speedLimit: 30 })}><ArrowLeft className="h-4 w-4" /> Left</Button>
+                  <Button intent="danger" disabled={driveStop.disabled} title={driveStop.title} onClick={() => void runCommand({ type: 'drive', command: 'stop', speedLimit: 0 })}><Square className="h-4 w-4" /> Stop</Button>
+                  <Button disabled={drive('right').disabled} title={drive('right').title} onClick={() => void runCommand({ type: 'drive', command: 'right', speedLimit: 30 })}>Right <ArrowRight className="h-4 w-4" /></Button>
                   <div />
-                  <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'drive', command: 'reverse', speedLimit: 30 })}><ArrowDown className="h-4 w-4" /> Rev</Button>
+                  <Button disabled={drive('reverse').disabled} title={drive('reverse').title} onClick={() => void runCommand({ type: 'drive', command: 'reverse', speedLimit: 30 })}><ArrowDown className="h-4 w-4" /> Rev</Button>
                   <div />
                 </div>
                 <div className="mt-3">
@@ -845,15 +927,15 @@ function App() {
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <Button disabled={motionDisabled}><Camera className="h-4 w-4" /> Pan Left</Button>
-                <Button disabled={motionDisabled}>Pan Right</Button>
-                <Button disabled={motionDisabled}>Cam Up</Button>
-                <Button disabled={motionDisabled}>Cam Down</Button>
-                <Button disabled={motionDisabled}>Bucket Up</Button>
-                <Button disabled={motionDisabled}>Bucket Down</Button>
-                <Button disabled={motionDisabled}>Chain Fwd</Button>
-                <Button disabled={motionDisabled}>Chain Rev</Button>
-                <Button disabled={motionDisabled} className="col-span-2">Conveyor Toggle</Button>
+                <Button disabled={actuator('pan', 'decrement').disabled} title={actuator('pan', 'decrement').title} onClick={() => void runCommand({ type: 'actuator', target: 'pan', action: 'decrement' })}><Camera className="h-4 w-4" /> Pan Left</Button>
+                <Button disabled={actuator('pan', 'increment').disabled} title={actuator('pan', 'increment').title} onClick={() => void runCommand({ type: 'actuator', target: 'pan', action: 'increment' })}>Pan Right</Button>
+                <Button disabled={actuator('camera_height', 'increment').disabled} title={actuator('camera_height', 'increment').title} onClick={() => void runCommand({ type: 'actuator', target: 'camera_height', action: 'increment' })}>Cam Up</Button>
+                <Button disabled={actuator('camera_height', 'decrement').disabled} title={actuator('camera_height', 'decrement').title} onClick={() => void runCommand({ type: 'actuator', target: 'camera_height', action: 'decrement' })}>Cam Down</Button>
+                <Button disabled={actuator('bucket_pos', 'increment').disabled} title={actuator('bucket_pos', 'increment').title} onClick={() => void runCommand({ type: 'actuator', target: 'bucket_pos', action: 'increment' })}>Bucket Up</Button>
+                <Button disabled={actuator('bucket_pos', 'decrement').disabled} title={actuator('bucket_pos', 'decrement').title} onClick={() => void runCommand({ type: 'actuator', target: 'bucket_pos', action: 'decrement' })}>Bucket Down</Button>
+                <Button disabled={actuator('bucket_vel', 'increment').disabled} title={actuator('bucket_vel', 'increment').title} onClick={() => void runCommand({ type: 'actuator', target: 'bucket_vel', action: 'increment' })}>Chain Fwd</Button>
+                <Button disabled={actuator('bucket_vel', 'decrement').disabled} title={actuator('bucket_vel', 'decrement').title} onClick={() => void runCommand({ type: 'actuator', target: 'bucket_vel', action: 'decrement' })}>Chain Rev</Button>
+                <Button disabled={actuator('conveyor', 'toggle').disabled} title={actuator('conveyor', 'toggle').title} className="col-span-2" onClick={() => void runCommand({ type: 'actuator', target: 'conveyor', action: 'toggle' })}>Conveyor Toggle</Button>
               </div>
             </div>
           </Panel>
@@ -862,12 +944,12 @@ function App() {
             <div className="grid gap-2">
               <MetricCard metric={{ label: 'Macro', value: 'none', detail: 'payload idle', status: 'idle' }} />
               <div className="grid grid-cols-2 gap-2">
-                <Button disabled={motionDisabled} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dig_start' })}>Start Dig</Button>
-                <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'payload', command: 'dig_stop' })}>Stop Dig</Button>
-                <Button disabled={motionDisabled} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dump_start' })}>Start Dump</Button>
-                <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'payload', command: 'dump_stop' })}>Stop Dump</Button>
-                <Button disabled={motionDisabled} onClick={() => void runCommand({ type: 'payload', command: 'stow' })}><Home className="h-4 w-4" /> Stow</Button>
-                <Button disabled={motionDisabled} intent="danger" onClick={() => void runCommand({ type: 'payload', command: 'abort' })}>Abort Payload</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start' }).title} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dig_start' })}>Start Dig</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_stop' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_stop' }).title} onClick={() => void runCommand({ type: 'payload', command: 'dig_stop' })}>Stop Dig</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_start' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_start' }).title} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dump_start' })}>Start Dump</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_stop' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_stop' }).title} onClick={() => void runCommand({ type: 'payload', command: 'dump_stop' })}>Stop Dump</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'stow' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'stow' }).title} onClick={() => void runCommand({ type: 'payload', command: 'stow' })}><Home className="h-4 w-4" /> Stow</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'abort' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'abort' }).title} intent="danger" onClick={() => void runCommand({ type: 'payload', command: 'abort' })}>Abort Payload</Button>
               </div>
               <label className="text-xs text-slate-500">Dig duration</label>
               <input disabled={motionDisabled} className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm disabled:opacity-40" defaultValue="8 s" />
@@ -949,10 +1031,10 @@ function App() {
                   </label>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Button disabled={!displaySnapshot.mission.connected} intent="danger" onClick={() => void runCommand({ type: 'recording', enabled: true, name: bagName })}>Start Bag</Button>
-                  <Button disabled={!displaySnapshot.mission.connected} onClick={() => void runCommand({ type: 'recording', enabled: false })}>Stop Bag</Button>
-                  <Button disabled={!displaySnapshot.mission.connected} onClick={() => void runCommand({ type: 'save_map', name: mapName })}><Save className="h-4 w-4" /> Save Map</Button>
-                  <Button disabled={!displaySnapshot.mission.connected}>Event Marker</Button>
+                  <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'recording', enabled: true, name: bagName }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'recording', enabled: true, name: bagName }).title} intent="danger" onClick={() => void runCommand({ type: 'recording', enabled: true, name: bagName })}>Start Bag</Button>
+                  <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'recording', enabled: false }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'recording', enabled: false }).title} onClick={() => void runCommand({ type: 'recording', enabled: false })}>Stop Bag</Button>
+                  <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'save_map', name: mapName }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'save_map', name: mapName }).title} onClick={() => void runCommand({ type: 'save_map', name: mapName })}><Save className="h-4 w-4" /> Save Map</Button>
+                  <Button disabled title="Event markers are not wired on the dashboard yet.">Event Marker</Button>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <MetricCard metric={{ label: 'CPU', value: displaySnapshot.mission.connected ? '29%' : '--', detail: 'demo', status: displaySnapshot.mission.connected ? 'ok' : 'bad' }} />
