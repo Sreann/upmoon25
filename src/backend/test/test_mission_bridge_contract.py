@@ -136,6 +136,7 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
         "max_cycles_le": 5,
         "bucket_pos_commanded": 26,
         "keep_bucket_chain_until_done": False,
+        "bucket_chain_speed": 40,
         "phase_elapsed_sec": 1.5,
         "conveyor_remaining_sec": 2.1,
         "use_local_terrain_grid": True,
@@ -145,6 +146,11 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
         "terrain_reverse_ok": True,
         "terrain_gate_forward": "blocked",
         "terrain_gate_reverse": "center_clear",
+        "ir_bucket_gate_min_ir_drop": 2,
+        "ir_bucket_gate_timeout_sec": 25.0,
+        "ir_bucket_gate_waiting": False,
+        "ir_anchor_before_last_bucket_step": 70,
+        "ir_bucket_gate_elapsed_sec": None,
     }
     snap = mission_bridge.build_snapshot()
     ds = snap["mission"]["digSequence"]
@@ -157,6 +163,8 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
     assert ds["terrainForwardOk"] is False
     assert ds["terrainGateForward"] == "blocked"
     assert ds["irSetupMode"] == "le"
+    assert ds["irBucketGateWaiting"] is False
+    assert ds["bucketChainSpeed"] == 40
     mission_bridge._state.dig_sequence_state = None
 
 

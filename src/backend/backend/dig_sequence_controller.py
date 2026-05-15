@@ -9,14 +9,20 @@ When ``use_local_terrain_grid`` is true (default), drive phases consult the same
 corridor slices + ``plan_corridor_step``). Dig does not turn the robot; it only
 holds ``cmd/velocity`` when the map says the commanded direction is unsafe.
 
-If IR reaches the target first, bucket chain stops for the drive phases. If the bucket
-position safety cap is reached first (without IR), bucket chain stays on until the full
-sequence ends (abort / timeout / normal completion).
+If IR reaches the target first during setup, the linear bucket pose still stops stepping, but the
+dig belt (``cmd/bucket_vel`` / bucket chain) **stays commanded** through forward, backward, dump,
+and repeat cycles until the sequence finishes or aborts. If setup exits on the bucket position
+safety cap without IR, the same belt behavior applies.
 
 By default ``ir_setup_mode`` is ``le``: IR is expected to **decrease** toward ``ir_target``
 (e.g. from ~70 while high to 17 at depth). The setup phase stops when IR is **less than or equal
 to** ``ir_target``, after it has been **above** ``ir_target`` or the bucket has stepped past
 ``bucket_start_pos``. Use ``ir_setup_mode:=eq`` for the legacy exact IR match.
+
+During setup, optional ``ir_bucket_gate_min_ir_drop`` (default ``2``, ``0`` disables) **gates**
+each successive ``cmd/bucket_pos`` step: after a step, publishing the next increment waits until IR
+drops by at least that amount vs. the reading **before** the step, or ``ir_bucket_gate_timeout_sec``
+elapses. That keeps drive and further bucket commands from outrunning bucket depth / IR response.
 
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
@@ -45,6 +51,7 @@ from std_msgs.msg import Bool, Int16, Int32, String
 from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
+    ir_bucket_step_gate_released,
     ir_setup_stop_eq,
     ir_setup_stop_le,
     merge_timed_drive_ms,
@@ -80,12 +87,16 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_target", 17)
         self.declare_parameter("bucket_start_pos", 20)
         self.declare_parameter("bucket_safety_stop", 34)
-        self.declare_parameter("bucket_chain_speed", 100)
+        self.declare_parameter("bucket_chain_speed", 40)
         self.declare_parameter("max_cycles_le", 5)
         self.declare_parameter("forward_linear", 35.0)
         self.declare_parameter("backward_linear", -35.0)
         self.declare_parameter("control_dt", 0.05)
         self.declare_parameter("ir_bucket_step_every_sec", 0.2)
+        # After each bucket_pos increment in SETUP_IR, wait for IR to drop by this much (vs reading
+        # before the step) before allowing the next increment. 0 disables the gate.
+        self.declare_parameter("ir_bucket_gate_min_ir_drop", 2)
+        self.declare_parameter("ir_bucket_gate_timeout_sec", 25.0)
         self.declare_parameter("conveyor_seconds", 5.0)
         self.declare_parameter("phase_timeout_sec", 180.0)
         self.declare_parameter("wait_for_nav_dig_arm", False)
@@ -126,6 +137,8 @@ class DigSequenceController(Node):
         self.backward_linear = float(self.get_parameter("backward_linear").value)
         self.control_dt = float(self.get_parameter("control_dt").value)
         self.ir_bucket_step_every_sec = float(self.get_parameter("ir_bucket_step_every_sec").value)
+        self.ir_bucket_gate_min_drop = max(0, int(self.get_parameter("ir_bucket_gate_min_ir_drop").value))
+        self.ir_bucket_gate_timeout_sec = float(self.get_parameter("ir_bucket_gate_timeout_sec").value)
         self.conveyor_seconds = float(self.get_parameter("conveyor_seconds").value)
         self.phase_timeout_sec = float(self.get_parameter("phase_timeout_sec").value)
         self._use_local_terrain_grid = bool(self.get_parameter("use_local_terrain_grid").value)
@@ -179,7 +192,10 @@ class DigSequenceController(Node):
         self.cycle_counter = 0
         self.setup_complete = False
         self._ir_setup_was_above_target = False
-        # True if setup exited via bucket_safety_stop: dig motor stays on until sequence ends (not IR-hit path).
+        self._ir_bucket_gate_waiting = False
+        self._ir_anchor_before_last_bucket_step = -1
+        self._ir_bucket_gate_t0 = 0.0
+        # True while dig_sequence commands the belt through the mission (telemetry / dashboard hint).
         self.keep_bucket_chain_until_done = False
 
         self.timer = self.create_timer(self.control_dt, self._tick)
@@ -188,10 +204,16 @@ class DigSequenceController(Node):
             fwd_desc = f"timed drive legs {self.timed_drive_ms} ms each (no encoder)"
         else:
             fwd_desc = f"encoder forward target {self.calibrated_rotary} on {self.encoder_topic}"
+        gate_msg = "ir_bucket_step gate off (ir_bucket_gate_min_ir_drop:=0)"
+        if self.ir_bucket_gate_min_drop > 0:
+            gate_msg = (
+                f"ir_bucket_step gate: min_drop={self.ir_bucket_gate_min_drop} "
+                f"timeout_sec={self.ir_bucket_gate_timeout_sec}"
+            )
         self.get_logger().info(
             f"dig_sequence start (state={self.state.name}): IRMode={self.ir_setup_mode}, IR→{self.ir_target}, "
             f"bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
-            f"{fwd_desc}, repeat while counter<={self.max_cycles_le}, {ginfo}"
+            f"{fwd_desc}, repeat while counter<={self.max_cycles_le}, {ginfo}, {gate_msg}"
         )
 
     def _grid_cb(self, msg: OccupancyGrid) -> None:
@@ -311,6 +333,7 @@ class DigSequenceController(Node):
             "max_cycles_le": int(self.max_cycles_le),
             "bucket_pos_commanded": int(self.bucket_pos_commanded),
             "keep_bucket_chain_until_done": bool(self.keep_bucket_chain_until_done),
+            "bucket_chain_speed": int(self.bucket_chain_speed),
             "phase_elapsed_sec": float(self._phase_elapsed()),
             "conveyor_remaining_sec": conv_rem,
             "use_local_terrain_grid": self._use_local_terrain_grid,
@@ -320,6 +343,13 @@ class DigSequenceController(Node):
             "terrain_reverse_ok": rev_ok,
             "terrain_gate_forward": fwd_r,
             "terrain_gate_reverse": rev_r,
+            "ir_bucket_gate_min_ir_drop": int(self.ir_bucket_gate_min_drop),
+            "ir_bucket_gate_timeout_sec": float(self.ir_bucket_gate_timeout_sec),
+            "ir_bucket_gate_waiting": bool(self._ir_bucket_gate_waiting),
+            "ir_anchor_before_last_bucket_step": int(self._ir_anchor_before_last_bucket_step),
+            "ir_bucket_gate_elapsed_sec": (
+                (time.monotonic() - self._ir_bucket_gate_t0) if self._ir_bucket_gate_waiting else None
+            ),
         }
         m = String()
         m.data = json.dumps(payload)
@@ -362,9 +392,8 @@ class DigSequenceController(Node):
             elif self.state == DigState.CONVEYOR_DUMP:
                 self._tick_conveyor()
 
-            if self.keep_bucket_chain_until_done and self.state not in (
+            if self.state not in (
                 DigState.WAIT_NAV_ARM,
-                DigState.SETUP_IR,
                 DigState.DONE,
             ):
                 self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
@@ -379,6 +408,7 @@ class DigSequenceController(Node):
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
             self.setup_complete = True
             self._ir_setup_was_above_target = False
+            self._ir_bucket_gate_waiting = False
             self.ir_last_step_time = self.get_clock().now()
 
         if self.ir_setup_mode == "eq":
@@ -393,21 +423,26 @@ class DigSequenceController(Node):
             )
 
         if ir_met:
-            self.keep_bucket_chain_until_done = False
+            self._ir_bucket_gate_waiting = False
+            self.keep_bucket_chain_until_done = True
             if self.ir_setup_mode == "eq":
-                self.get_logger().info("IR exact match at target; stopping bucket chain.")
+                self.get_logger().info(
+                    "IR exact match at target; setup complete "
+                    f"(belt stays at bucket_chain_speed={self.bucket_chain_speed})."
+                )
             else:
                 self.get_logger().info(
                     f"IR reached at-or-below target (ir_value={self.ir_value}, "
-                    f"ir_target={self.ir_target}); stopping bucket chain."
+                    f"ir_target={self.ir_target}); setup complete "
+                    f"(belt stays at bucket_chain_speed={self.bucket_chain_speed})."
                 )
-            self.pub_bucket_vel.publish(Int16(data=0))
             self._stop_motion()
             self.state = DigState.DRIVE_FORWARD
             self._reset_phase_clock()
             return
 
         if self.bucket_pos_commanded >= self.bucket_safety_stop:
+            self._ir_bucket_gate_waiting = False
             self.keep_bucket_chain_until_done = True
             if self.ir_setup_mode == "eq":
                 warn_tail = (
@@ -428,10 +463,30 @@ class DigSequenceController(Node):
             return
 
         step_elapsed = (self.get_clock().now() - self.ir_last_step_time).nanoseconds / 1e9
-        if step_elapsed >= self.ir_bucket_step_every_sec:
-            self.bucket_pos_commanded += 1
-            self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
-            self.ir_last_step_time = self.get_clock().now()
+        if step_elapsed < self.ir_bucket_step_every_sec:
+            return
+
+        if self.ir_bucket_gate_min_drop > 0 and self._ir_bucket_gate_waiting:
+            elapsed_gate = time.monotonic() - self._ir_bucket_gate_t0
+            if not ir_bucket_step_gate_released(
+                self.ir_value,
+                self._ir_anchor_before_last_bucket_step,
+                self.ir_bucket_gate_min_drop,
+                elapsed_sec=elapsed_gate,
+                timeout_sec=self.ir_bucket_gate_timeout_sec,
+            ):
+                return
+            self._ir_bucket_gate_waiting = False
+
+        ir_before = int(self.ir_value)
+        self.bucket_pos_commanded += 1
+        self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
+        self.ir_last_step_time = self.get_clock().now()
+
+        if self.ir_bucket_gate_min_drop > 0:
+            self._ir_bucket_gate_waiting = True
+            self._ir_anchor_before_last_bucket_step = ir_before
+            self._ir_bucket_gate_t0 = time.monotonic()
 
     def _tick_drive_forward(self) -> None:
         if self._timed_drive_only:

@@ -120,6 +120,7 @@ def test_dig_sequence_state_contract_keys():
         "max_cycles_le": 5,
         "bucket_pos_commanded": 22,
         "keep_bucket_chain_until_done": False,
+        "bucket_chain_speed": 40,
         "phase_elapsed_sec": 0.5,
         "conveyor_remaining_sec": None,
         "use_local_terrain_grid": True,
@@ -129,6 +130,11 @@ def test_dig_sequence_state_contract_keys():
         "terrain_reverse_ok": True,
         "terrain_gate_forward": "center_clear",
         "terrain_gate_reverse": "center_clear",
+        "ir_bucket_gate_min_ir_drop": 2,
+        "ir_bucket_gate_timeout_sec": 25.0,
+        "ir_bucket_gate_waiting": False,
+        "ir_anchor_before_last_bucket_step": -1,
+        "ir_bucket_gate_elapsed_sec": None,
     }
     for key in (
         "phase",

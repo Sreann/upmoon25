@@ -3,6 +3,7 @@
 from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
+    ir_bucket_step_gate_released,
     ir_setup_stop_eq,
     ir_setup_stop_le,
     merge_timed_drive_ms,
@@ -32,6 +33,28 @@ def test_ir_setup_stop_le_bucket_step_primes_below_target_edge():
     # Never saw iv > 17 but bucket stepped 21 > 20
     stop, above = ir_setup_stop_le(16, 17, 21, 20, False)
     assert stop is True and above is False
+
+
+def test_ir_bucket_step_gate_disabled_when_min_drop_zero():
+    assert ir_bucket_step_gate_released(10, -1, 0, elapsed_sec=0.0, timeout_sec=1.0) is True
+
+
+def test_ir_bucket_step_gate_releases_when_ir_drops():
+    assert ir_bucket_step_gate_released(68, 70, 2, elapsed_sec=0.0, timeout_sec=10.0) is True
+    assert ir_bucket_step_gate_released(69, 70, 2, elapsed_sec=0.0, timeout_sec=10.0) is False
+
+
+def test_ir_bucket_step_gate_negative_iv_blocks():
+    assert ir_bucket_step_gate_released(-1, 70, 2, elapsed_sec=0.0, timeout_sec=99.0) is False
+
+
+def test_ir_bucket_step_gate_anchor_negative_requires_timeout():
+    assert ir_bucket_step_gate_released(50, -1, 2, elapsed_sec=0.0, timeout_sec=10.0) is False
+    assert ir_bucket_step_gate_released(50, -1, 2, elapsed_sec=10.0, timeout_sec=10.0) is True
+
+
+def test_ir_bucket_step_gate_timeout_releases_without_drop():
+    assert ir_bucket_step_gate_released(70, 70, 5, elapsed_sec=11.0, timeout_sec=10.0) is True
 
 
 def test_ros_param_coerces_numeric_string_and_float():
