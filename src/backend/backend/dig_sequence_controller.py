@@ -41,6 +41,7 @@ from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
     merge_timed_drive_ms,
+    ros_param_non_negative_int,
     timed_leg_complete,
 )
 from backend.navigation_controller_pure import plan_corridor_step
@@ -87,9 +88,9 @@ class DigSequenceController(Node):
         self.declare_parameter("terrain_look_rows", 8)
         self.declare_parameter("terrain_unknown_ratio_max", 0.45)
 
-        self.calibrated_rotary = int(self.get_parameter("calibrated_rotary").value)
-        td_raw = max(0, int(self.get_parameter("timed_drive_ms").value))
-        legacy_fwd = max(0, int(self.get_parameter("forward_drive_ms").value))
+        self.calibrated_rotary = ros_param_non_negative_int(self.get_parameter("calibrated_rotary").value)
+        td_raw = ros_param_non_negative_int(self.get_parameter("timed_drive_ms").value)
+        legacy_fwd = ros_param_non_negative_int(self.get_parameter("forward_drive_ms").value)
         self.timed_drive_ms = merge_timed_drive_ms(td_raw, legacy_fwd)
         if legacy_fwd > 0 and td_raw > 0 and legacy_fwd != td_raw:
             self.get_logger().warn("Both timed_drive_ms and forward_drive_ms set; using timed_drive_ms.")
@@ -126,8 +127,11 @@ class DigSequenceController(Node):
 
         if self.calibrated_rotary <= 0 and self.timed_drive_ms <= 0:
             raise RuntimeError(
-                "Set 'calibrated_rotary' to a positive tick target, or set 'timed_drive_ms' > 0 for "
-                "time-based forward and backward drive legs."
+                "dig_sequence needs either calibrated_rotary > 0 (encoder mode) or timed_drive_ms > 0 (timed forward+back). "
+                f"Got calibrated_rotary={self.calibrated_rotary}, timed_drive_ms={td_raw}, "
+                f"forward_drive_ms(legacy)={legacy_fwd} (merged timed ms={self.timed_drive_ms}). "
+                "If you passed -p timed_drive_ms:=N via `lunar run dig --dig-timing-ms`, rebuild and source: "
+                "`colcon build --packages-select backend` then `source install/setup.bash` (stale install often drops overrides)."
             )
 
         sens_qos = QoSProfile(depth=3, reliability=2, history=1, durability=2)

@@ -4,8 +4,21 @@ from backend.dig_sequence_params import (
     encoder_forward_target_reached,
     encoder_returned_home,
     merge_timed_drive_ms,
+    ros_param_non_negative_int,
     timed_leg_complete,
 )
+
+
+def test_ros_param_coerces_numeric_string_and_float():
+    assert ros_param_non_negative_int("5000") == 5000
+    assert ros_param_non_negative_int(5000.4) == 5000
+    assert ros_param_non_negative_int(5000.6) == 5001
+
+
+def test_ros_param_bool_and_garbage_are_zero():
+    assert ros_param_non_negative_int(True) == 0
+    assert ros_param_non_negative_int(False) == 0
+    assert ros_param_non_negative_int("nope") == 0
 
 
 def test_merge_timed_prefers_explicit_over_legacy():
