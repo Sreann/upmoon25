@@ -18,6 +18,8 @@ from sensor_msgs.msg import PointCloud2
 
 from rclpy.node import Node, QoSProfile
 from std_msgs.msg import Int8
+from frontend.depth_control import pointcloud_command_topics, pointcloud_stream_enabled, unique_topics
+from frontend.depth_points import sanitize_point_vertices
 
 DEPTH_SN = '018322071045'
 RGB_SN = '018322071465'
@@ -48,7 +50,12 @@ class DepthDriver(Node):
         super().__init__('depth_driver')
 
         self.declare_parameter('demand_publish', False)
+        self.declare_parameter('publish_hz', 15.0)
+        self.declare_parameter('max_points', 50000)
         self.demand_publish = self.get_parameter('demand_publish').value
+        self.publish_hz = float(self.get_parameter('publish_hz').value)
+        self.max_points = int(self.get_parameter('max_points').value)
+        self.publish_enabled = not self.demand_publish
 
         # This is special for Gazebo - subscriber QOS must match publisher QOS
         self.QOS = QoSProfile(
@@ -77,17 +84,14 @@ class DepthDriver(Node):
         self.pipe = None
 
         if self.demand_publish:
-            self.create_subscription(Int8, '/cmd/pointcloud', self.onCmd, 1)
-            return
+            for topic in unique_topics(pointcloud_command_topics()):
+                self.create_subscription(Int8, topic, self.onCmd, 1)
+            self.get_logger().info(
+                "Depth driver in on-demand mode; send /cmd/pointcloud (or cmd/pointcloud) 1 to stream, 0 to stop."
+            )
 
-        while rclpy.ok():
-            try:
-                self._ensure_pipeline()
-                self.getFrame()
-            except Exception as exc:
-                self.get_logger().warn(f"Depth camera stream dropped: {exc}. Retrying...")
-                self._reset_pipeline()
-                pytime.sleep(1.0)
+        tick_hz = max(1.0, self.publish_hz)
+        self.create_timer(1.0 / tick_hz, self._capture_tick)
 
     def _ensure_pipeline(self):
         if self.pipe is not None:
@@ -149,16 +153,25 @@ class DepthDriver(Node):
         self.pipe = None
 
     def onTimer(self):
-        self.getFrame()
+        self._capture_tick()
 
     def onCmd(self, msg):
-        self.get_logger().info('Publishing')
+        enabled = pointcloud_stream_enabled(msg.data)
+        if enabled != self.publish_enabled:
+            self.publish_enabled = enabled
+            mode = "enabled" if enabled else "paused"
+            self.get_logger().info(f"Depth stream {mode} via /cmd/pointcloud command.")
+
+    def _capture_tick(self):
+        if not self.publish_enabled:
+            return
         try:
             self._ensure_pipeline()
             self.getFrame()
         except Exception as exc:
-            self.get_logger().warn(f"Depth camera command capture failed: {exc}. Retrying on next request...")
+            self.get_logger().warn(f"Depth camera stream dropped: {exc}. Retrying...")
             self._reset_pipeline()
+            pytime.sleep(0.25)
 
     def getFrame(self):
             frame = self.pipe.wait_for_frames()
@@ -190,10 +203,14 @@ class DepthDriver(Node):
 
             vertices = np.vstack((x, y, z)).T
             
-            self.publishPC(vertices, time)    
+            vertices = sanitize_point_vertices(vertices, max_points=self.max_points)
+            self.publishPC(vertices, time)
 
     def publishPC(self, vertices, time):
         # Credit: https://github.com/SebastianGrans/ROS2-Point-Cloud-Demo/blob/master/pcd_demo/pcd_publisher/pcd_publisher_node.py
+        if vertices.size == 0:
+            return
+
         ros_dtype = sensor_msgs.PointField.FLOAT32
         dtype = np.float32
         itemsize = np.dtype(dtype).itemsize

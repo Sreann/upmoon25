@@ -371,9 +371,10 @@ def _render_camera_panel():
 def _render_command_sensors():
     st.subheader("📡 Live Sensors")
     state = store.get_snapshot()
-    s1, s2 = st.columns(2)
+    s1, s2, s3 = st.columns(3)
     s1.metric("IR Left", f"{int(state.ir_left)}")
     s2.metric("IR Right", f"{int(state.ir_right)}")
+    s3.metric("Depth Points", f"{int(state.point_cloud_density):,}")
     e1, e2 = st.columns(2)
     e1.metric("Encoder Left", f"{int(state.encoder_left)}")
     e2.metric("Encoder Right", f"{int(state.encoder_right)}")
