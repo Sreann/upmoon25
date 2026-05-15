@@ -68,7 +68,9 @@ Servo lin_bucket_servo;
 int servo_pos;
 int cam_height;
 int bucket_height;
-bool actuators_armed;
+bool pan_armed;
+bool cam_armed;
+bool bucket_armed;
 long encoder_right_count;
 long encoder_left_count;
 int8_t last_encoded_right;
@@ -78,19 +80,30 @@ uint32_t encoder_left_invalid;
 
 int convertRangeToDutyCycle(int percent);
 
-static void armActuatorsIfNeeded() {
-  if (actuators_armed) {
+static void armPanIfNeeded() {
+  if (pan_armed) {
     return;
   }
-  actuators_armed = true;
-
-  // Apply known-safe command targets before enabling PWM output pins.
+  pan_armed = true;
   cam_servo.write(servo_pos);
-  lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
-  lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
-
   cam_servo.attach(SERVO_PIN);
+}
+
+static void armCamIfNeeded() {
+  if (cam_armed) {
+    return;
+  }
+  cam_armed = true;
+  lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
   lin_cam_servo.attach(CAM_PIN);
+}
+
+static void armBucketIfNeeded() {
+  if (bucket_armed) {
+    return;
+  }
+  bucket_armed = true;
+  lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
   lin_bucket_servo.attach(BUCKET_PIN);
 }
 
@@ -181,7 +194,7 @@ void dispatchCommand(int command_id, int value) {
   switch (command_id) {
     case SERVO_PIN:
       servo_pos = constrain(value, 0, 180);
-      armActuatorsIfNeeded();
+      armPanIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("servo_pos set to: ");
         Serial.println(servo_pos);
@@ -190,7 +203,7 @@ void dispatchCommand(int command_id, int value) {
 
     case CAM_PIN:
       cam_height = constrain(value, MIN_RANGE, MAX_RANGE);
-      armActuatorsIfNeeded();
+      armCamIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("cam_height set to: ");
         Serial.println(cam_height);
@@ -199,7 +212,7 @@ void dispatchCommand(int command_id, int value) {
 
     case BUCKET_PIN:
       bucket_height = constrain(value, MIN_RANGE, MAX_RANGE);
-      armActuatorsIfNeeded();
+      armBucketIfNeeded();
       if (DEBUG_SERIAL) {
         Serial.print("bucket_height set to: ");
         Serial.println(bucket_height);
@@ -251,7 +264,9 @@ void setup() {
   servo_pos = 90;
   cam_height = 0;
   bucket_height = 0;
-  actuators_armed = false;
+  pan_armed = false;
+  cam_armed = false;
+  bucket_armed = false;
   encoder_right_count = 0;
   encoder_left_count = 0;
   encoder_right_invalid = 0;
@@ -289,9 +304,13 @@ void loop() {
     parseInput();
   }
 
-  if (actuators_armed) {
+  if (pan_armed) {
     cam_servo.write(servo_pos);
+  }
+  if (cam_armed) {
     lin_cam_servo.writeMicroseconds(convertRangeToDutyCycle(cam_height));
+  }
+  if (bucket_armed) {
     lin_bucket_servo.writeMicroseconds(convertRangeToDutyCycle(bucket_height));
   }
 
