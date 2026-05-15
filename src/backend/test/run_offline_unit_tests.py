@@ -19,6 +19,8 @@ TEST_FILES = [
     ROOT / "src" / "backend" / "test" / "test_terrain_grid_math.py",
     ROOT / "src" / "backend" / "test" / "test_flag_detection_math.py",
     ROOT / "src" / "backend" / "test" / "test_keyboard_trusted_paths.py",
+    ROOT / "src" / "backend" / "test" / "test_depth_control.py",
+    ROOT / "src" / "backend" / "test" / "test_depth_points.py",
     ROOT / "src" / "backend" / "test" / "test_global_mapper_tf.py",
     ROOT / "src" / "backend" / "test" / "test_navigation_controller_pure.py",
     ROOT / "src" / "backend" / "test" / "test_occupancy_grid_codec.py",
