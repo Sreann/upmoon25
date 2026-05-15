@@ -1,4 +1,4 @@
-"""Encoder bring-up: Arduino (IR + encoders), Sabertooth drive, timed forward/back run."""
+"""Encoder bring-up: Arduino + drive with timed fwd/rev/left/right sequence."""
 
 from launch import LaunchDescription
 from launch.actions import EmitEvent, RegisterEventHandler
@@ -27,6 +27,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'linear_speed': 35.0,
+            'turn_speed': 30.0,
             'phase_duration_sec': 5.0,
             'stop_publish_sec': 0.8,
         }],
