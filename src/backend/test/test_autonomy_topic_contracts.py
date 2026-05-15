@@ -56,7 +56,7 @@ def test_autonomy_state_contract_keys():
     sample = {
         "stamp": 0.0,
         "mode": "Manual",
-        "state": "HEALTH_CHECK",
+        "state": "PERCEPTION_FAULT",
         "armed": False,
         "estop": False,
         "confidence": 0.5,
@@ -77,5 +77,69 @@ def test_autonomy_state_contract_keys():
         "last_decision",
         "next_transition",
         "zones",
+    ):
+        assert key in sample
+
+
+def test_nav_mission_state_contract_keys():
+    sample = {
+        "stamp": 0.0,
+        "phase": "FOLLOW_TO_DIG",
+        "controller_mode": "corridor_follow",
+        "detail": "follow_zone_goal",
+        "dig_autonomy_enabled": False,
+        "nav_controller_corridor_enabled": True,
+        "unknown_fraction": 0.2,
+        "dig_distance_m": 1.1,
+    }
+    for key in (
+        "phase",
+        "controller_mode",
+        "detail",
+        "dig_autonomy_enabled",
+        "nav_controller_corridor_enabled",
+    ):
+        assert key in sample
+
+
+def test_dig_sequence_state_contract_keys():
+    sample = {
+        "stamp": 0.0,
+        "phase": "DRIVE_FORWARD",
+        "wait_for_nav_dig_arm": False,
+        "dig_arm": False,
+        "ir_value": 10,
+        "ir_target": 17,
+        "encoder_value": 50,
+        "encoder_target": 120,
+        "encoder_topic": "/sensor/encoder/left",
+        "cycle_counter": 0,
+        "max_cycles_le": 5,
+        "bucket_pos_commanded": 22,
+        "keep_bucket_chain_until_done": False,
+        "phase_elapsed_sec": 0.5,
+        "conveyor_remaining_sec": None,
+        "use_local_terrain_grid": True,
+        "terrain_had_grid": True,
+        "terrain_fresh": True,
+        "terrain_forward_ok": True,
+        "terrain_reverse_ok": True,
+        "terrain_gate_forward": "center_clear",
+        "terrain_gate_reverse": "center_clear",
+    }
+    for key in (
+        "phase",
+        "wait_for_nav_dig_arm",
+        "ir_value",
+        "ir_target",
+        "encoder_value",
+        "encoder_target",
+        "encoder_topic",
+        "cycle_counter",
+        "max_cycles_le",
+        "bucket_pos_commanded",
+        "phase_elapsed_sec",
+        "use_local_terrain_grid",
+        "terrain_forward_ok",
     ):
         assert key in sample

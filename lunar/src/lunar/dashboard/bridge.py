@@ -22,16 +22,19 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Image, PointCloud2
-from std_msgs.msg import Float32, Int16, Int32, String
+from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray, String
 
 from lunar.dashboard.state import store
+from lunar.keyboard_topics import clamp_pan_angle
 
 HOLD_TIMEOUT_SEC = 0.25
 WATCHDOG_PERIOD_SEC = 0.05
 CAMERA_STREAM_PORT = 8766
 CAMERA_WS_PORT = 8767
 CAMERA_STREAM_BOUNDARY = b"frame"
-CAMERA_PUSH_INTERVAL_SEC = 1.0 / 20.0
+# Legacy Streamlit path: throttle outbound JPEG on /camera/ws (see ``max_camera_push_hz`` on ``DashboardBridge``).
+_DEFAULT_CAMERA_PUSH_HZ = 30.0
+CAMERA_PUSH_INTERVAL_SEC = 1.0 / _DEFAULT_CAMERA_PUSH_HZ
 
 
 def _latest_camera_jpeg() -> bytes:
@@ -175,7 +178,7 @@ def _schedule_camera_frame(payload: bytes):
     if not payload:
         return
     now = time.monotonic()
-    if now - _last_camera_push_ts < CAMERA_PUSH_INTERVAL_SEC:
+    if CAMERA_PUSH_INTERVAL_SEC > 0.0 and (now - _last_camera_push_ts < CAMERA_PUSH_INTERVAL_SEC):
         return
     _last_camera_push_ts = now
 
@@ -188,6 +191,19 @@ def _schedule_camera_frame(payload: bytes):
 class DashboardBridge(Node):
     def __init__(self):
         super().__init__("lunar_dashboard_bridge")
+
+        global CAMERA_PUSH_INTERVAL_SEC
+        self.declare_parameter("max_camera_push_hz", _DEFAULT_CAMERA_PUSH_HZ)
+        cam_hz = float(self.get_parameter("max_camera_push_hz").value)
+        if cam_hz <= 0.0:
+            CAMERA_PUSH_INTERVAL_SEC = 0.0
+        else:
+            cam_hz = max(1.0, min(cam_hz, 60.0))
+            CAMERA_PUSH_INTERVAL_SEC = 1.0 / cam_hz
+        self.get_logger().info(
+            f"dashboard bridge /camera/ws JPEG cap: {'unlimited' if CAMERA_PUSH_INTERVAL_SEC <= 0.0 else f'{round(1.0 / CAMERA_PUSH_INTERVAL_SEC, 2)} Hz'} "
+            f"(param max_camera_push_hz)"
+        )
 
         sensor_qos = QoSProfile(
             depth=3,
@@ -219,6 +235,9 @@ class DashboardBridge(Node):
         self.create_subscription(Int16, "/sensor/ir/right", self.ir_right_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/left", self.encoder_left_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/right", self.encoder_right_cb, 10)
+        self.create_subscription(
+            Int32MultiArray, "/sensor/encoder/telemetry", self.encoder_telemetry_cb, 10
+        )
 
         # Publishers
         self.pub_velocity = self.create_publisher(Twist, "cmd/velocity", 10)
@@ -324,6 +343,19 @@ class DashboardBridge(Node):
 
     def encoder_right_cb(self, msg):
         store.update(encoder_right=int(msg.data))
+
+    def encoder_telemetry_cb(self, msg):
+        data = [int(v) for v in msg.data]
+        if len(data) < 6:
+            return
+        store.update(
+            encoder_pin_right=data[0],
+            encoder_pin_left=data[1],
+            encoder_dec_right=data[2],
+            encoder_dec_left=data[3],
+            encoder_bad_right=data[4],
+            encoder_bad_left=data[5],
+        )
 
     def pan_feedback_cb(self, msg):
         store.update(camera_pan=int(msg.data))
@@ -475,7 +507,12 @@ class DashboardBridge(Node):
         self._clear_hold("bucket_vel")
 
     def publish_pan(self, angle: int) -> None:
-        clamped = max(10, min(170, int(angle)))
+        raw = int(angle)
+        # ``arduino_driver`` treats ``{-1, 0, 1}`` as jog/stop commands; absolute angles otherwise.
+        if raw in (-1, 1):
+            self.pub_pan.publish(Int16(data=raw))
+            return
+        clamped = clamp_pan_angle(raw)
         self.pub_pan.publish(Int16(data=clamped))
         store.update(camera_pan=clamped, active_pan_cmd="")
 

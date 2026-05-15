@@ -4,7 +4,9 @@ This document captures the current situation and a practical autonomy plan for t
 
 ## Progress Update
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
+
+**Canonical stack decisions, Nav2 definition, and the full cross-team focus checklist live in `AUTONOMY_ROADMAP.md`** (*Authoritative planning decisions* and *Focus areas checklist*). This field plan stays tactical; do not fork competing stack guidance here.
 
 We have made concrete progress on the field-operations layer: the team now has a planned mission-control surface, a working dashboard app scaffold, live bridge contracts, fallback states, and a first safe-command bridge path. This does not mean autonomy is complete. It means the robot now has a clearer operator/control architecture to support autonomy work.
 
@@ -23,6 +25,8 @@ Completed or substantially implemented:
 - HSV red/orange flag detector baseline.
 - Shadow-mode autonomy supervisor.
 - Single launcher for those nodes through `lunar autonomy-stack`.
+- Global occupancy **software** alignment (`occupancy_grid_codec`, mapper/costmap/planner message layout); hardware still unproven.
+- **Navigation controller v1** in repo: local-grid corridor follower, `/autonomy/navigation_twist` + status topics; supervisor `READY` + optional twist forwarding (see `AUTONOMY_ROADMAP` ledger).
 
 Still field-critical and unproven:
 
@@ -72,8 +76,8 @@ The near-term goal is not full autonomy from the first test. The goal is to buil
 - Whether TF between camera, robot, odom, and map frames is correct.
 - Whether point clouds align correctly with the robot.
 - Whether `global_mapper` has ever produced a useful map from real hardware.
-- Whether `path_planner` and `motion_controller` work beyond simulation.
-- Whether Nav2 is actually part of the current runtime path.
+- Whether `path_planner` and `motion_controller` work beyond simulation (**lab/sim path**; not the competition critical path until local-first navigation is proven—see roadmap).
+- **Nav2 is not in scope this cycle** (standard ROS 2 nav stack; deferred per `AUTONOMY_ROADMAP.md`). The committed runtime path is **custom nodes on existing drive/actuator topics**.
 - Field dimensions and exact zone layout are not known yet.
 - Whether competition rules allow operator initialization, teleop marking, AprilTags, or other fiducials needs confirmation.
 
@@ -119,6 +123,14 @@ The robot should not try to solve everything with one large AI model. The safer 
 7. Mission state machine: search, navigate, dig, return, dump, repeat, abort.
 
 The dashboard should expose each layer so failures are visible.
+
+### Authoritative alignment (do not contradict)
+
+Match `AUTONOMY_ROADMAP.md` **Authoritative planning decisions**:
+
+- **Ship** local terrain grid + short segments + supervisor gates before betting on global SLAM or long paths.
+- **`autonomy_supervisor`**: readiness and `/autonomy/state`; add **`navigation_controller`** behavior and mission FSM as explicit next layers.
+- **Nav2**: out of scope until after a supervised autonomous dig/dump works without it and time is allocated for integration.
 
 ## Perception Plan
 

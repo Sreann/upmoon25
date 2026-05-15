@@ -5,8 +5,11 @@
     <xacro:property name="wheel_thickness" value="0.086"/>
     <xacro:property name="wheel_height"    value="0.062"/>
     <xacro:property name="wheel_mass"      value="100.83"/>
-    <xacro:property name="base_width"      value="0.483"/>
-    <xacro:property name="base_length"     value="0.711"/>
+    <!-- Ground plane under base_link origin: wheel joint z=-wheel_height, axle ~horizontal, contact ≈ -wheel_height - wheel_radius -->
+    <xacro:property name="base_link_to_ground_m" value="${wheel_height + wheel_radius}"/>
+    <!-- base_link box: X = forward/back, Y = lateral (field: 68 cm × 144 cm) -->
+    <xacro:property name="base_width"      value="1.44"/>
+    <xacro:property name="base_length"     value="0.68"/>
     <xacro:property name="base_height"     value="0.124"/>
     <xacro:property name="base_mass"       value="56.7"/>
     <xacro:property name="actuator_dx"     value="0.314"/>
@@ -15,5 +18,8 @@
     <xacro:property name="imu_x"           value="0.0"/>
     <xacro:property name="imu_y"           value="0.0"/>
     <xacro:property name="imu_z"           value="0.0"/>
+
+    <!-- Ground point under base_link centroid (wheel joint z = -wheel_height, axle ~horizontal). -->
+    <xacro:property name="base_link_to_ground_m" value="${wheel_height + wheel_radius}"/>
  
 </robot>

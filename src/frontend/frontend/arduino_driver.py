@@ -9,7 +9,7 @@ from pathlib import Path
 
 from enum import Enum
 from rclpy.node import Node
-from std_msgs.msg import Int16, Int32
+from std_msgs.msg import Int16, Int32, Int32MultiArray, MultiArrayDimension
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
@@ -28,6 +28,10 @@ from sensor_msgs.msg import JointState
     Publishes:
     /sensor/ir/right - Raw IR measurement from sensor
     /sensor/ir/left
+    /sensor/encoder/telemetry - Int32MultiArray when firmware sends extended '#' frame:
+        [pin_phase_right, pin_phase_left, dec_phase_right, dec_phase_left,
+         invalid_transition_right, invalid_transition_left]
+        Phases are quadrature states 0..3; illegal Gray jumps increment the invalid counters.
 
     TF transforms:
     actuator_base_link -> actuator_link - describes height of camera
@@ -36,8 +40,9 @@ from sensor_msgs.msg import JointState
 
 DEBUG = False
 FLASH_ON_START = os.environ.get("LUNAR_FLASH_ARDUINO_ON_START", "0") == "1"
-PAN_MAX = 170
-PAN_MIN = 10
+# Absolute pan command range (degrees); match lunar.keyboard_topics.PAN_ANGLE_*.
+PAN_MAX = 180
+PAN_MIN = 0
 ARDUINO_PAN_PIN = 3
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_BUCKET_PIN = 10
@@ -118,6 +123,9 @@ class ArduinoDriver(Node):
         self.ir_left_pub = self.create_publisher(Int16, '/sensor/ir/left', 1, callback_group=pub_cb)
         self.encoder_left_pub = self.create_publisher(Int32, '/sensor/encoder/left', 1, callback_group=pub_cb)
         self.encoder_right_pub = self.create_publisher(Int32, '/sensor/encoder/right', 1, callback_group=pub_cb)
+        self.encoder_telemetry_pub = self.create_publisher(
+            Int32MultiArray, '/sensor/encoder/telemetry', 1, callback_group=pub_cb
+        )
 
         self.PUB_campan = self.create_publisher(Int16, '/camera/rgb/pan', 1, callback_group=pub_cb)
 
@@ -229,8 +237,8 @@ class ArduinoDriver(Node):
 
     def ir_send(self, data):
         try:
-            # Robust cleaning: Keep only digits, colons, and the header
-            clean_data = "".join(c for c in data if c.isdigit() or c in ":#")
+            # Robust cleaning: digits, signs (encoder counts may be negative), colons, header
+            clean_data = "".join(c for c in data if c.isdigit() or c in ":#-")
             if not clean_data.startswith('#'):
                 return
 
@@ -268,6 +276,21 @@ class ArduinoDriver(Node):
             enc_right_msg = Int32()
             enc_right_msg.data = int(self.encoder_right)
             self.encoder_right_pub.publish(enc_right_msg)
+
+            if len(tokens) >= 10:
+                tel = Int32MultiArray()
+                tel.layout.dim.append(
+                    MultiArrayDimension(label='encoder_telemetry', size=6, stride=6)
+                )
+                tel.data = [
+                    int(tokens[4]),
+                    int(tokens[5]),
+                    int(tokens[6]),
+                    int(tokens[7]),
+                    int(tokens[8]),
+                    int(tokens[9]),
+                ]
+                self.encoder_telemetry_pub.publish(tel)
         except Exception:
             pass
 

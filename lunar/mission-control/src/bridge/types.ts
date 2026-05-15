@@ -8,6 +8,16 @@ export type MissionState =
   | 'IDLE'
   | 'HEALTH_CHECK'
   | 'WAIT_FOR_ZONE_MARKS'
+  | 'READY'
+  | 'PERCEPTION_FAULT'
+  | 'PERCEPTION_STALE'
+  | 'LOCALIZATION_LOST'
+  | 'TERRAIN_FAULT'
+  | 'TERRAIN_STALE'
+  | 'AWAIT_MARK_DIG'
+  | 'AWAIT_MARK_DUMP'
+  | 'NAV_READY'
+  | 'NAV_ACTIVE'
   | 'DISCOVER_DUMP_ZONE'
   | 'NAV_TO_DIG'
   | 'DIG'
@@ -19,12 +29,75 @@ export type MissionState =
   | 'ABORTED'
   | 'ESTOP'
 
+/** Phases from ``nav_mission_executor`` (JSON field ``phase`` on ``/autonomy/nav_mission/state``). */
+export type NavMissionPhase =
+  | 'IDLE'
+  | 'MAP_EXPLORE'
+  | 'HEAD_SWEEP'
+  | 'BACKUP_RECOVER'
+  | 'FOLLOW_TO_DIG'
+  | 'AT_DIG_HANDOFF'
+  | 'COMPLETE'
+  | 'ABORTED'
+
+export type NavMissionControllerMode = 'idle' | 'mission_twist' | 'corridor_follow' | 'none'
+
+export type NavMissionSnapshot = {
+  phase: NavMissionPhase | string
+  controllerMode: NavMissionControllerMode | string
+  detail?: string
+  digAutonomyEnabled?: boolean
+  navCorridorEnabled?: boolean
+  digDistanceM?: number
+  unknownFraction?: number
+}
+
+/** Phases from ``dig_sequence`` (JSON ``phase`` on ``/autonomy/dig_sequence/state``). */
+export type DigSequencePhase =
+  | 'WAIT_NAV_ARM'
+  | 'SETUP_IR'
+  | 'DRIVE_FORWARD'
+  | 'DRIVE_BACK'
+  | 'CONVEYOR_DUMP'
+  | 'DONE'
+
+export type DigSequenceSnapshot = {
+  phase: DigSequencePhase | string
+  waitForNavDigArm?: boolean
+  digArm?: boolean
+  irValue?: number
+  irTarget?: number
+  encoderValue?: number
+  encoderTarget?: number
+  encoderTopic?: string
+  cycleCounter?: number
+  maxCyclesLe?: number
+  bucketPosCommanded?: number
+  keepBucketChainUntilDone?: boolean
+  phaseElapsedSec?: number
+  conveyorRemainingSec?: number | null
+  /** When true, dig drive phases gate on ``/autonomy/local_terrain_grid`` (same as nav). */
+  useLocalTerrainGrid?: boolean
+  terrainHadGrid?: boolean
+  terrainFresh?: boolean
+  terrainForwardOk?: boolean
+  terrainReverseOk?: boolean
+  terrainGateForward?: string
+  terrainGateReverse?: string
+}
+
 export type MissionSnapshot = {
   connected: boolean
   armed: boolean
   estop: boolean
   mode: RobotMode
   state: MissionState
+  /** When true, bridge published /autonomy/navigation_active for short-segment nav (stack must still gate motion). */
+  navigationActive?: boolean
+  /** Start→dig nav mission (optional; live bridge forwards ``/autonomy/nav_mission/state``). */
+  navMission?: NavMissionSnapshot | null
+  /** ``dig_sequence`` node FSM (optional; live bridge forwards ``/autonomy/dig_sequence/state``). */
+  digSequence?: DigSequenceSnapshot | null
   target: string
   heartbeatMs: number | null
   confidence: number
@@ -52,7 +125,7 @@ export type TopicHealth = {
 }
 
 export type CameraStream = {
-  id: 'front' | 'rear' | 'tracking'
+  id: 'front' | 'rear'
   name: string
   topic: string
   status: StreamStatus
@@ -75,6 +148,9 @@ export type FieldZone = {
   label: string
   status: ZoneStatus
   detail: string
+  /** Present when operator marked (mission bridge); odom frame. */
+  odom_x?: number
+  odom_y?: number
 }
 
 /** Pose published with operator zone marks (`/autonomy/zone_mark` via mission bridge). */
@@ -166,6 +242,7 @@ export type RobotCommand =
   | { type: 'drive'; command: DriveCommand; speedLimit: number }
   | { type: 'payload'; command: PayloadCommand }
   | { type: 'mark_zone'; zone: FieldZone['id']; pick?: { frameId: 'base_link'; x: number; y: number } }
+  | { type: 'set_navigation_active'; active: boolean }
   | { type: 'recording'; enabled: boolean; name?: string }
   | { type: 'save_map'; name: string }
   | { type: 'pid'; gains: PidGains }

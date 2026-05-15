@@ -20,6 +20,7 @@ for path in (repo_root, package_root):
     if path_str not in sys.path:
         sys.path.append(path_str)
 
+from lunar.keyboard_topics import PAN_ANGLE_MAX, PAN_ANGLE_MIN  # noqa: E402
 from lunar.dashboard.state import store  # noqa: E402
 from lunar.dashboard.components.hardware import render_hardware_panel  # noqa: E402
 from lunar.dashboard.components.teleop import render_hold_controls  # noqa: E402
@@ -359,13 +360,11 @@ def _render_command_metrics():
 
 def _render_camera_panel():
     st.subheader("👁️ Vision Feed")
-    tab_rgb, tab_rear, tab_tracking = st.tabs(["Front D435 RGB", "Rear D435 RGB", "T265 Tracking"])
+    tab_rgb, tab_rear = st.tabs(["Front D435 RGB", "Rear D435 RGB"])
     with tab_rgb:
         _render_camera_stream("Front D435 RGB", "rgb", height=520)
     with tab_rear:
         _render_camera_stream("Rear D435 RGB", "rear", height=520)
-    with tab_tracking:
-        _render_camera_stream("T265 Tracking", "tracking", height=520)
 
 
 @_fragment(run_every=UI_REFRESH_SEC)
@@ -378,6 +377,12 @@ def _render_command_sensors():
     e1, e2 = st.columns(2)
     e1.metric("Encoder Left", f"{int(state.encoder_left)}")
     e2.metric("Encoder Right", f"{int(state.encoder_right)}")
+    st.caption(
+        "Encoder debug "
+        f"| pin(R/L)=({int(state.encoder_pin_right)},{int(state.encoder_pin_left)}) "
+        f"| dec(R/L)=({int(state.encoder_dec_right)},{int(state.encoder_dec_left)}) "
+        f"| bad(R/L)=({int(state.encoder_bad_right)},{int(state.encoder_bad_left)})"
+    )
 
 
 @_fragment(run_every=UI_REFRESH_SEC)
@@ -469,8 +474,8 @@ def _render_command_controls():
         st.markdown('<div class="compact-card"><h4>Camera</h4></div>', unsafe_allow_html=True)
         camera_pan = st.slider(
             "Pan",
-            10,
-            170,
+            PAN_ANGLE_MIN,
+            PAN_ANGLE_MAX,
             key="camera_pan",
             disabled=not ros_live,
         )
@@ -534,15 +539,15 @@ def _render_analytics_live():
             df_hist["Time"] -= df_hist["Time"].iloc[0]
             st.line_chart(df_hist, x="Time", y=["CPU Load (%)", "Temp (°C)", "Battery (V)"], height=300)
 
-        st.subheader("📉 Odometry Divergence (V-SLAM vs Baseline)")
+        st.subheader("📉 Odometry vs command velocity")
         if len(state.history_time) > 2:
             df_odom = pd.DataFrame({
                 "Time": list(state.history_time),
-                "V-SLAM (T265)": list(state.history_vel),
+                "/odom linear": list(state.history_vel),
                 "Baseline (Cmd)": list(state.history_base_vel),
             })
             df_odom["Time"] -= df_odom["Time"].iloc[0]
-            st.line_chart(df_odom, x="Time", y=["V-SLAM (T265)", "Baseline (Cmd)"], height=300)
+            st.line_chart(df_odom, x="Time", y=["/odom linear", "Baseline (Cmd)"], height=300)
 
     with col_radar:
         st.subheader("🦇 IR Proximity Radar")

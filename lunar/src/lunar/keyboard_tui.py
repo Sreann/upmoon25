@@ -6,7 +6,7 @@ from typing import Optional
 
 import serial.tools.list_ports
 
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
+from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
 
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_PAN_PIN = 3
@@ -52,6 +52,12 @@ class RobotActuators:
             "ir_right": 0,
             "enc_left": 0,
             "enc_right": 0,
+            "enc_pin_right": 0,
+            "enc_pin_left": 0,
+            "enc_dec_right": 0,
+            "enc_dec_left": 0,
+            "enc_bad_right": 0,
+            "enc_bad_left": 0,
         }
         self.control_path = "unknown"
 
@@ -65,7 +71,7 @@ class RobotActuators:
             import rclpy
             from rclpy.node import Node
             from geometry_msgs.msg import Twist
-            from std_msgs.msg import Int16, Int32
+            from std_msgs.msg import Int16, Int32, Int32MultiArray
         except Exception as exc:
             self.mode = "offline"
             self.status = f"ROS unavailable: {exc}"
@@ -91,6 +97,9 @@ class RobotActuators:
         self.node.create_subscription(Int16, ks["ir_left"], self._on_ir_left, 10)
         self.node.create_subscription(Int32, ks["encoder_left"], self._on_enc_left, 10)
         self.node.create_subscription(Int32, ks["encoder_right"], self._on_enc_right, 10)
+        self.node.create_subscription(
+            Int32MultiArray, ks["encoder_telemetry"], self._on_encoder_telemetry, 10
+        )
         self.mode = "ros-topic"
         self.control_path = "ROS topics -> robot stack"
         self.status = "publishing robot command topics"
@@ -144,6 +153,17 @@ class RobotActuators:
     def _on_enc_right(self, msg) -> None:
         self.telemetry["enc_right"] = int(msg.data)
 
+    def _on_encoder_telemetry(self, msg) -> None:
+        data = [int(v) for v in msg.data]
+        if len(data) < 6:
+            return
+        self.telemetry["enc_pin_right"] = data[0]
+        self.telemetry["enc_pin_left"] = data[1]
+        self.telemetry["enc_dec_right"] = data[2]
+        self.telemetry["enc_dec_left"] = data[3]
+        self.telemetry["enc_bad_right"] = data[4]
+        self.telemetry["enc_bad_left"] = data[5]
+
     def _publish_int(self, name: str, value: int) -> bool:
         if self.node is None or name not in self.publishers:
             return False
@@ -193,7 +213,7 @@ class RobotActuators:
         return self._publish_int("camera-height", value)
 
     def set_pan(self, value: int) -> bool:
-        value = _clamp(value, 10, 170)
+        value = clamp_pan_angle(value)
         if self.serial is not None:
             try:
                 self.serial.write(f"{ARDUINO_PAN_PIN}:{value}\n".encode("utf-8"))
@@ -353,7 +373,8 @@ def run_keyboard_tui(
             self.actuator = actuator
             self.start_ts = time.monotonic()
             self.height_step = _clamp(step, 1, 25)
-            self.bucket_pos_step = 1
+            self.bucket_pos_coarse_step = self.height_step
+            self.bucket_pos_fine_step = 1
             self.last_drive_ts = 0.0
             self.last_bucket_ts = 0.0
             self.drive_timeout = max(0.12, float(drive_timeout))
@@ -387,7 +408,10 @@ def run_keyboard_tui(
                 yield Static("COMMANDS", classes="section")
                 yield Static("DRIVE: W fwd | S rev | A left | D right | SPACE stop | Q quit", classes="line")
                 yield Static("SERVOS: U/J cam height | 0/1 min/max | H/L pan angle | M center", classes="line")
-                yield Static("MINING: I/K bucket pos | R/F chain | C conveyor", classes="line")
+                yield Static(
+                    "MINING: I/K bucket pos (coarse, same step as U/J) | Shift+I/Shift+K ±1 | R/F chain | C conveyor",
+                    classes="line",
+                )
                 yield Static("ADJUST: [ ] W/S speed | , . A/D turn | - / R/F chain", classes="line")
                 yield Static("VALUES", classes="section")
                 yield Static("", id="drive_value", classes="line")
@@ -397,6 +421,7 @@ def run_keyboard_tui(
                 yield Static("", id="servo_value", classes="line")
                 yield Static("", id="mining_value", classes="line")
                 yield Static("", id="sensor_value", classes="line")
+                yield Static("", id="encoder_debug_value", classes="line")
                 yield Static("", id="timing_value", classes="line")
                 yield ProgressBar(total=100, show_eta=False, id="height_bar")
                 yield Static("LAST", classes="section")
@@ -461,13 +486,21 @@ def run_keyboard_tui(
                 f"servos     cam_height={self.camera_height:>3}%  pan={self.pan:>3}  step={self.height_step}"
             )
             self.query_one("#mining_value", Static).update(
-                f"mining     bucket_pos={self.bucket_pos:>3}%  chain={self.bucket_vel:>4}  "
-                f"active_chain={self.active_bucket_key or '-'}  conveyor={'ON ' if self.conveyor else 'OFF'}"
+                f"mining     bucket_pos={self.bucket_pos:>3}%  "
+                f"bkt±{self.bucket_pos_coarse_step}/±{self.bucket_pos_fine_step}  "
+                f"chain={self.bucket_vel:>4}  active_chain={self.active_bucket_key or '-'}  "
+                f"conveyor={'ON ' if self.conveyor else 'OFF'}"
             )
             telemetry = self.actuator.telemetry
             self.query_one("#sensor_value", Static).update(
                 f"sensors    ir_left={telemetry['ir_left']:>4}  ir_right={telemetry['ir_right']:>4}  "
                 f"enc_left={telemetry['enc_left']:>7}  enc_right={telemetry['enc_right']:>7}"
+            )
+            self.query_one("#encoder_debug_value", Static).update(
+                "enc_dbg    "
+                f"pin(R/L)=({telemetry['enc_pin_right']},{telemetry['enc_pin_left']})  "
+                f"dec(R/L)=({telemetry['enc_dec_right']},{telemetry['enc_dec_left']})  "
+                f"bad(R/L)=({telemetry['enc_bad_right']},{telemetry['enc_bad_left']})"
             )
             key_age = time.monotonic() - self.last_key_ts if self.last_key_ts else 0.0
             self.query_one("#timing_value", Static).update(
@@ -530,7 +563,7 @@ def run_keyboard_tui(
                 self.last_result = "pan disabled"
                 self._refresh_view()
                 return
-            self.pan = _clamp(value, 10, 170)
+            self.pan = clamp_pan_angle(value)
             self.last_pan_ts = time.monotonic()
             self.position_refresh_until = max(self.position_refresh_until, self.last_pan_ts + 0.75)
             self._set_result(self.actuator.set_pan(self.pan))
@@ -723,6 +756,10 @@ def run_keyboard_tui(
                 "m": self.action_pan_center,
                 "i": self.action_bucket_up,
                 "k": self.action_bucket_down,
+                "I": self.action_bucket_up_fine,
+                "K": self.action_bucket_down_fine,
+                "shift+i": self.action_bucket_up_fine,
+                "shift+k": self.action_bucket_down_fine,
                 "r": self.action_bucket_chain_forward,
                 "f": self.action_bucket_chain_reverse,
                 "c": self.action_conveyor_toggle,
@@ -786,10 +823,16 @@ def run_keyboard_tui(
             self._set_pan(90)
 
         def action_bucket_up(self) -> None:
-            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_step)
+            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_coarse_step)
 
         def action_bucket_down(self) -> None:
-            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_step)
+            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_coarse_step)
+
+        def action_bucket_up_fine(self) -> None:
+            self._set_bucket_pos(self.bucket_pos + self.bucket_pos_fine_step)
+
+        def action_bucket_down_fine(self) -> None:
+            self._set_bucket_pos(self.bucket_pos - self.bucket_pos_fine_step)
 
         def action_bucket_chain_forward(self) -> None:
             self._set_bucket_vel_latch(self.bucket_speed, "r")

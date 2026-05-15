@@ -17,6 +17,8 @@
     <xacro:include filename="robot_wheel.xacro" />
     <xacro:include filename="robot_inertia.xacro" />
   
+    <!-- base_link origin: horizontal centroid of plan-view chassis box; z = box center (URDF box centered on link). -->
+    <!-- base_link origin: centroid of the plan-view chassis box (XY) and of that box in Z. -->
     <link name="base_link">
         <!-- Base -->
         <visual>
@@ -55,6 +57,14 @@
         </collision>
         <xacro:inertial_box mass="${base_mass}" x="${base_length}" y="${base_width}" z="${base_height}"/>
     </link>
+
+    <!-- Horizontal projection of base_link centroid onto the ground (same X,Y as base_link). -->
+    <link name="base_footprint"/>
+    <joint name="base_footprint_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="base_footprint"/>
+        <origin xyz="0 0 ${-base_link_to_ground_m}" rpy="0 0 0"/>
+    </joint>
  
     <xacro:include filename="robot_actuator.xacro"   />
     <!-- xacro:include filename="robot_imu.xacro"       / -->

@@ -4,30 +4,45 @@ Autonomous dig sequence for lunar `run dig`.
 Runs once after IR/bucket calibration, then repeats drive-forward → drive-back →
 dump → bucket bump until the cycle counter exceeds max_cycles (see params).
 
+When ``use_local_terrain_grid`` is true (default), drive phases consult the same
+``/autonomy/local_terrain_grid`` OccupancyGrid as short-segment nav (forward / rear
+corridor slices + ``plan_corridor_step``). Dig does not turn the robot; it only
+holds ``cmd/velocity`` when the map says the commanded direction is unsafe.
+
 If IR reaches the target first, bucket chain stops for the drive phases. If the bucket
 position safety cap is reached first (without IR), bucket chain stays on until the full
 sequence ends (abort / timeout / normal completion).
 
 Prerequisite: frontend stack publishing /sensor/ir, wheel encoders, and
 subscribed to cmd/velocity, cmd/bucket_pos, cmd/bucket_vel, cmd/conveyor.
+For terrain gating, run ``local_terrain_grid`` (e.g. ``lunar run nav``) so the grid topic exists.
 """
 
 from __future__ import annotations
 
+import json
+import time
 from enum import Enum
 
+import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from std_msgs.msg import Int16, Int32
+from std_msgs.msg import Bool, Int16, Int32, String
+
+from backend.navigation_controller_pure import plan_corridor_step
 
 
 class DigState(Enum):
-    SETUP_IR = 0
-    DRIVE_FORWARD = 1
-    DRIVE_BACK = 2
-    CONVEYOR_DUMP = 3
+    """When ``wait_for_nav_dig_arm`` is true, sequence begins in ``WAIT_NAV_ARM`` until ``/autonomy/dig_arm`` is true."""
+
+    WAIT_NAV_ARM = 0
+    SETUP_IR = 1
+    DRIVE_FORWARD = 2
+    DRIVE_BACK = 3
+    CONVEYOR_DUMP = 4
     DONE = 5
 
 
@@ -50,6 +65,13 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_bucket_step_every_sec", 0.2)
         self.declare_parameter("conveyor_seconds", 5.0)
         self.declare_parameter("phase_timeout_sec", 180.0)
+        self.declare_parameter("wait_for_nav_dig_arm", False)
+        # Same local traversability map as short-segment nav (`local_terrain_grid` → OccupancyGrid).
+        self.declare_parameter("use_local_terrain_grid", True)
+        self.declare_parameter("grid_topic", "/autonomy/local_terrain_grid")
+        self.declare_parameter("grid_max_age_sec", 0.6)
+        self.declare_parameter("terrain_look_rows", 8)
+        self.declare_parameter("terrain_unknown_ratio_max", 0.45)
 
         self.calibrated_rotary = int(self.get_parameter("calibrated_rotary").value)
         enc_side = str(self.get_parameter("encoder_side").value).strip().lower()
@@ -71,6 +93,15 @@ class DigSequenceController(Node):
         self.ir_bucket_step_every_sec = float(self.get_parameter("ir_bucket_step_every_sec").value)
         self.conveyor_seconds = float(self.get_parameter("conveyor_seconds").value)
         self.phase_timeout_sec = float(self.get_parameter("phase_timeout_sec").value)
+        self._use_local_terrain_grid = bool(self.get_parameter("use_local_terrain_grid").value)
+        self._grid_topic = str(self.get_parameter("grid_topic").value).strip() or "/autonomy/local_terrain_grid"
+        self._grid_max_age_sec = float(self.get_parameter("grid_max_age_sec").value)
+        self._terrain_look_rows = max(1, int(self.get_parameter("terrain_look_rows").value))
+        self._terrain_unknown_max = float(self.get_parameter("terrain_unknown_ratio_max").value)
+        self._grid_np: np.ndarray | None = None
+        self._grid_mono: float | None = None
+        self._had_terrain_grid = False
+        self._last_terrain_warn = 0.0
 
         if self.calibrated_rotary <= 0:
             raise RuntimeError("Parameter 'calibrated_rotary' must be set to a positive tick target.")
@@ -81,14 +112,22 @@ class DigSequenceController(Node):
         self.pub_bucket_pos = self.create_publisher(Int16, "cmd/bucket_pos", 10)
         self.pub_bucket_vel = self.create_publisher(Int16, "cmd/bucket_vel", 10)
         self.pub_conveyor = self.create_publisher(Int16, "cmd/conveyor", 10)
+        self.pub_dig_state = self.create_publisher(String, "/autonomy/dig_sequence/state", 10)
+        self._wait_for_nav_arm = bool(self.get_parameter("wait_for_nav_dig_arm").value)
 
         self.ir_value = -1
         self.encoder_value = 0
 
         self.create_subscription(Int16, "/sensor/ir", self._on_ir, sens_qos)
         self.create_subscription(Int32, self.encoder_topic, self._on_encoder, sens_qos)
+        if self._use_local_terrain_grid:
+            self.create_subscription(OccupancyGrid, self._grid_topic, self._grid_cb, 10)
 
-        self.state = DigState.SETUP_IR
+        self._nav_dig_arm = False
+        if self._wait_for_nav_arm:
+            self.create_subscription(Bool, "/autonomy/dig_arm", self._dig_arm_cb, 10)
+
+        self.state = DigState.WAIT_NAV_ARM if self._wait_for_nav_arm else DigState.SETUP_IR
         self.phase_clock = self.get_clock().now()
         self.ir_last_step_time = self.get_clock().now()
         self.conveyor_until = None
@@ -101,10 +140,84 @@ class DigSequenceController(Node):
         self.keep_bucket_chain_until_done = False
 
         self.timer = self.create_timer(self.control_dt, self._tick)
+        ginfo = f"local_terrain_grid={self._grid_topic}" if self._use_local_terrain_grid else "local_terrain_grid=off"
         self.get_logger().info(
-            f"dig_sequence start: IR→{self.ir_target}, bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
-            f"encoder target {self.calibrated_rotary} on {self.encoder_topic}, repeat while counter<={self.max_cycles_le}"
+            f"dig_sequence start (state={self.state.name}): IR→{self.ir_target}, bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
+            f"encoder target {self.calibrated_rotary} on {self.encoder_topic}, repeat while counter<={self.max_cycles_le}, {ginfo}"
         )
+
+    def _grid_cb(self, msg: OccupancyGrid) -> None:
+        if msg.info.width <= 0 or msg.info.height <= 0:
+            return
+        try:
+            arr = np.asarray(msg.data, dtype=np.int8).reshape((msg.info.height, msg.info.width), order="C")
+        except ValueError:
+            return
+        self._grid_np = arr
+        self._grid_mono = time.monotonic()
+        self._had_terrain_grid = True
+
+    def _terrain_fresh(self) -> bool:
+        if self._grid_mono is None:
+            return False
+        return (time.monotonic() - self._grid_mono) <= self._grid_max_age_sec
+
+    def _terrain_slice_forward(self) -> np.ndarray | None:
+        if self._grid_np is None:
+            return None
+        g = self._grid_np
+        h = int(g.shape[0])
+        lr = min(self._terrain_look_rows, h)
+        return g[:lr, :]
+
+    def _terrain_slice_reverse(self) -> np.ndarray | None:
+        if self._grid_np is None:
+            return None
+        g = self._grid_np
+        h = int(g.shape[0])
+        lr = min(self._terrain_look_rows, h)
+        return g[-lr:, :] if h >= lr else g
+
+    def _terrain_plan_ok(self, sub: np.ndarray | None) -> tuple[bool, str]:
+        """Return (allowed, reason) using the same corridor scoring as ``navigation_controller``."""
+        if sub is None or sub.size == 0:
+            return True, "no_slice"
+        if sub.shape[0] < 2 or sub.shape[1] < 3:
+            return True, "slice_too_small"
+        lr = min(self._terrain_look_rows, int(sub.shape[0]))
+        ln, an, reason = plan_corridor_step(
+            sub, look_rows=lr, unknown_ratio_max=self._terrain_unknown_max
+        )
+        ok = (ln > 1e-6) or (abs(an) > 1e-6)
+        return ok, reason
+
+    def _terrain_gate_forward(self) -> tuple[bool, str]:
+        if not self._use_local_terrain_grid:
+            return True, "disabled"
+        if not self._had_terrain_grid:
+            return True, "no_grid_yet"
+        if not self._terrain_fresh():
+            return False, "stale_grid"
+        return self._terrain_plan_ok(self._terrain_slice_forward())
+
+    def _terrain_gate_reverse(self) -> tuple[bool, str]:
+        if not self._use_local_terrain_grid:
+            return True, "disabled"
+        if not self._had_terrain_grid:
+            return True, "no_grid_yet"
+        if not self._terrain_fresh():
+            return False, "stale_grid"
+        return self._terrain_plan_ok(self._terrain_slice_reverse())
+
+    def _maybe_warn_terrain(self, detail: str) -> None:
+        now = time.monotonic()
+        if now - self._last_terrain_warn < 2.0:
+            return
+        self._last_terrain_warn = now
+        self.get_logger().warn(f"Dig drive held: {detail}")
+
+    def _dig_arm_cb(self, msg: Bool) -> None:
+        self._nav_dig_arm = bool(msg.data)
 
     def _on_ir(self, msg: Int16) -> None:
         self.ir_value = int(msg.data)
@@ -127,6 +240,40 @@ class DigSequenceController(Node):
     def _reset_phase_clock(self) -> None:
         self.phase_clock = self.get_clock().now()
 
+    def _publish_dig_state(self) -> None:
+        conv_rem: float | None = None
+        if self.conveyor_until is not None and self.state == DigState.CONVEYOR_DUMP:
+            conv_rem = max(0.0, (self.conveyor_until - self.get_clock().now()).nanoseconds / 1e9)
+        fwd_ok, fwd_r = self._terrain_gate_forward()
+        rev_ok, rev_r = self._terrain_gate_reverse()
+        payload = {
+            "stamp": time.time(),
+            "phase": self.state.name,
+            "wait_for_nav_dig_arm": self._wait_for_nav_arm,
+            "dig_arm": bool(self._nav_dig_arm),
+            "ir_value": int(self.ir_value),
+            "ir_target": int(self.ir_target),
+            "encoder_value": int(self.encoder_value),
+            "encoder_target": int(self.calibrated_rotary),
+            "encoder_topic": self.encoder_topic,
+            "cycle_counter": int(self.cycle_counter),
+            "max_cycles_le": int(self.max_cycles_le),
+            "bucket_pos_commanded": int(self.bucket_pos_commanded),
+            "keep_bucket_chain_until_done": bool(self.keep_bucket_chain_until_done),
+            "phase_elapsed_sec": float(self._phase_elapsed()),
+            "conveyor_remaining_sec": conv_rem,
+            "use_local_terrain_grid": self._use_local_terrain_grid,
+            "terrain_had_grid": self._had_terrain_grid,
+            "terrain_fresh": self._terrain_fresh() if self._had_terrain_grid else False,
+            "terrain_forward_ok": fwd_ok,
+            "terrain_reverse_ok": rev_ok,
+            "terrain_gate_forward": fwd_r,
+            "terrain_gate_reverse": rev_r,
+        }
+        m = String()
+        m.data = json.dumps(payload)
+        self.pub_dig_state.publish(m)
+
     def _abort(self, reason: str) -> None:
         self.get_logger().error(reason)
         self.keep_bucket_chain_until_done = False
@@ -139,24 +286,39 @@ class DigSequenceController(Node):
             rclpy.shutdown()
 
     def _tick(self) -> None:
-        if self.state == DigState.DONE:
-            return
+        try:
+            if self.state == DigState.DONE:
+                return
 
-        if self._phase_elapsed() > self.phase_timeout_sec:
-            self._abort("Phase timed out.")
-            return
+            if self._phase_elapsed() > self.phase_timeout_sec:
+                self._abort("Phase timed out.")
+                return
 
-        if self.state == DigState.SETUP_IR:
-            self._tick_setup_ir()
-        elif self.state == DigState.DRIVE_FORWARD:
-            self._tick_drive_forward()
-        elif self.state == DigState.DRIVE_BACK:
-            self._tick_drive_back()
-        elif self.state == DigState.CONVEYOR_DUMP:
-            self._tick_conveyor()
+            if self.state == DigState.WAIT_NAV_ARM:
+                if self._nav_dig_arm:
+                    self.get_logger().info("/autonomy/dig_arm true — starting dig setup (nav handoff).")
+                    self.state = DigState.SETUP_IR
+                    self.setup_complete = False
+                    self._reset_phase_clock()
+                return
 
-        if self.keep_bucket_chain_until_done and self.state not in (DigState.SETUP_IR, DigState.DONE):
-            self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
+            if self.state == DigState.SETUP_IR:
+                self._tick_setup_ir()
+            elif self.state == DigState.DRIVE_FORWARD:
+                self._tick_drive_forward()
+            elif self.state == DigState.DRIVE_BACK:
+                self._tick_drive_back()
+            elif self.state == DigState.CONVEYOR_DUMP:
+                self._tick_conveyor()
+
+            if self.keep_bucket_chain_until_done and self.state not in (
+                DigState.WAIT_NAV_ARM,
+                DigState.SETUP_IR,
+                DigState.DONE,
+            ):
+                self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
+        finally:
+            self._publish_dig_state()
 
     def _tick_setup_ir(self) -> None:
         if not self.setup_complete:
@@ -205,6 +367,11 @@ class DigSequenceController(Node):
             self.state = DigState.DRIVE_BACK
             self._reset_phase_clock()
             return
+        allow, detail = self._terrain_gate_forward()
+        if not allow:
+            self._maybe_warn_terrain(f"forward blocked ({detail})")
+            self._stop_motion()
+            return
         self._publish_vel(self.forward_linear)
 
     def _tick_drive_back(self) -> None:
@@ -216,6 +383,11 @@ class DigSequenceController(Node):
             self._conveyor_end_applied = False
             self.pub_conveyor.publish(Int16(data=1))
             self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
+            return
+        allow, detail = self._terrain_gate_reverse()
+        if not allow:
+            self._maybe_warn_terrain(f"reverse blocked ({detail})")
+            self._stop_motion()
             return
         self._publish_vel(self.backward_linear)
 

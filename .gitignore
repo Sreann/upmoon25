@@ -30,3 +30,7 @@ field_photos/
 
 # Lunar local runtime logs
 .lunar/dashboard.log
+.lunar/runs/
+
+# Accidental uv workspace lock at repo root (use lunar/uv.lock)
+/uv.lock

@@ -25,7 +25,6 @@ MISSING_TOPIC_SEC = 3.0
 CAMERA_TOPICS = {
     "front": "/camera/rgb/image_compressed",
     "rear": "/camera/rear/image_compressed",
-    "tracking": "/camera/tracking/image_compressed",
 }
 SAFETY_TOPICS = {
     "/camera/depth/points",
@@ -76,7 +75,7 @@ class MissionBridgeState:
     armed: bool = False
     estop: bool = False
     mode: str = "Manual"
-    mission_state: str = "HEALTH_CHECK"
+    mission_state: str = "PERCEPTION_FAULT"
     payload_state: str = "unknown"
     stop_reason: str = "Waiting for live localization and depth topics."
     last_decision: str = "Telemetry snapshot generated."
@@ -85,6 +84,9 @@ class MissionBridgeState:
     terrain_grid: Dict[str, Any] | None = None
     flag_candidates: Dict[str, Any] | None = None
     autonomy_state: Dict[str, Any] | None = None
+    nav_mission_state: Dict[str, Any] | None = None
+    dig_sequence_state: Dict[str, Any] | None = None
+    navigation_active: bool = False
     recent_logs: Deque[Dict[str, str]] = field(default_factory=lambda: deque(maxlen=30))
     trends: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=24))
     topics: Dict[str, TopicSample] = field(default_factory=dict)
@@ -200,6 +202,48 @@ def _metric_status_bad_when_zero(value: float) -> str:
     return "bad" if value <= 0 else "ok"
 
 
+def _nav_mission_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not raw:
+        return None
+    return {
+        "phase": raw.get("phase"),
+        "controllerMode": raw.get("controller_mode"),
+        "detail": raw.get("detail"),
+        "digAutonomyEnabled": bool(raw.get("dig_autonomy_enabled", False)),
+        "navCorridorEnabled": bool(raw.get("nav_controller_corridor_enabled", False)),
+        "digDistanceM": raw.get("dig_distance_m"),
+        "unknownFraction": raw.get("unknown_fraction"),
+    }
+
+
+def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    if not raw:
+        return None
+    return {
+        "phase": raw.get("phase"),
+        "waitForNavDigArm": bool(raw.get("wait_for_nav_dig_arm", False)),
+        "digArm": bool(raw.get("dig_arm", False)),
+        "irValue": raw.get("ir_value"),
+        "irTarget": raw.get("ir_target"),
+        "encoderValue": raw.get("encoder_value"),
+        "encoderTarget": raw.get("encoder_target"),
+        "encoderTopic": raw.get("encoder_topic"),
+        "cycleCounter": raw.get("cycle_counter"),
+        "maxCyclesLe": raw.get("max_cycles_le"),
+        "bucketPosCommanded": raw.get("bucket_pos_commanded"),
+        "keepBucketChainUntilDone": bool(raw.get("keep_bucket_chain_until_done", False)),
+        "phaseElapsedSec": raw.get("phase_elapsed_sec"),
+        "conveyorRemainingSec": raw.get("conveyor_remaining_sec"),
+        "useLocalTerrainGrid": bool(raw.get("use_local_terrain_grid", False)),
+        "terrainHadGrid": bool(raw.get("terrain_had_grid", False)),
+        "terrainFresh": bool(raw.get("terrain_fresh", False)),
+        "terrainForwardOk": bool(raw.get("terrain_forward_ok", True)),
+        "terrainReverseOk": bool(raw.get("terrain_reverse_ok", True)),
+        "terrainGateForward": raw.get("terrain_gate_forward"),
+        "terrainGateReverse": raw.get("terrain_gate_reverse"),
+    }
+
+
 def build_snapshot() -> Dict[str, Any]:
     now = time.time()
     connected = any(sample.last_seen is not None and now - sample.last_seen <= MISSING_TOPIC_SEC for sample in _state.topics.values())
@@ -237,7 +281,7 @@ def build_snapshot() -> Dict[str, Any]:
         cameras.append(
             {
                 "id": camera_id,
-                "name": {"front": "Front D435 RGB", "rear": "Rear D435 RGB", "tracking": "Tracking Camera"}[camera_id],
+                "name": {"front": "Front D435 RGB", "rear": "Rear D435 RGB"}[camera_id],
                 "topic": topic,
                 "status": status,
                 "fps": f"{sample.rate_hz:.0f}" if sample.rate_hz > 0 else "--",
@@ -257,9 +301,14 @@ def build_snapshot() -> Dict[str, Any]:
         _state.last_decision = str(_state.autonomy_state.get("last_decision", _state.last_decision))
         _state.next_transition = str(_state.autonomy_state.get("next_transition", _state.next_transition))
         _state.payload_state = str(_state.autonomy_state.get("payload", _state.payload_state))
-    elif connected and odom_status == "live" and depth_status == "live" and _state.mission_state == "HEALTH_CHECK":
-        _state.mission_state = "WAIT_FOR_ZONE_MARKS"
-        _state.stop_reason = "Safe command bridge connected. Autonomy command bridge not enabled."
+    elif (
+        connected
+        and odom_status == "live"
+        and depth_status == "live"
+        and _state.mission_state == "PERCEPTION_FAULT"
+    ):
+        _state.mission_state = "AWAIT_MARK_DIG"
+        _state.stop_reason = "Safe command bridge connected. Autonomy supervisor JSON not enabled; awaiting dig zone mark."
 
     trends = list(_state.trends)[-16:] or [
         {
@@ -291,6 +340,7 @@ def build_snapshot() -> Dict[str, Any]:
             "estop": _state.estop,
             "mode": _state.mode,
             "state": _state.mission_state,
+            "navigationActive": _state.navigation_active,
             "target": "field readiness",
             "heartbeatMs": 0 if connected else None,
             "confidence": confidence,
@@ -299,6 +349,8 @@ def build_snapshot() -> Dict[str, Any]:
             "stopReason": _state.stop_reason,
             "lastDecision": _state.last_decision,
             "nextTransition": _state.next_transition,
+            "navMission": _nav_mission_for_dashboard(_state.nav_mission_state),
+            "digSequence": _dig_sequence_for_dashboard(_state.dig_sequence_state),
         },
         "metrics": [
             {"label": "Linear Vel", "value": f"{_state.linear_vel:.2f} m/s", "detail": "/odom", "status": "ok" if odom_status == "live" else "bad"},
@@ -456,7 +508,7 @@ def _run_ros_node() -> None:
     from rclpy.node import Node
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import CompressedImage, PointCloud2
-    from std_msgs.msg import Float32, Int16, Int32, String
+    from std_msgs.msg import Bool, Float32, Int16, Int32, String
 
     class MissionBridgeNode(Node):
         def __init__(self):
@@ -470,7 +522,6 @@ def _run_ros_node() -> None:
             for topic, note, safety in [
                 ("/camera/rgb/image_compressed", "front RGB", False),
                 ("/camera/rear/image_compressed", "rear RGB", False),
-                ("/camera/tracking/image_compressed", "tracking camera", False),
                 ("/camera/depth/points", "depth grid source", True),
                 ("/odom", "localization source", True),
                 ("/tf", "frame transforms", True),
@@ -480,7 +531,6 @@ def _run_ros_node() -> None:
 
             self.create_subscription(CompressedImage, "/camera/rgb/image_compressed", lambda msg: self.camera_cb("/camera/rgb/image_compressed", msg), sensor_qos)
             self.create_subscription(CompressedImage, "/camera/rear/image_compressed", lambda msg: self.camera_cb("/camera/rear/image_compressed", msg), sensor_qos)
-            self.create_subscription(CompressedImage, "/camera/tracking/image_compressed", lambda msg: self.camera_cb("/camera/tracking/image_compressed", msg), sensor_qos)
             self.create_subscription(PointCloud2, "/camera/depth/points", self.point_cloud_cb, sensor_qos)
             self.create_subscription(Odometry, "/odom", self.odom_cb, 10)
             self.create_subscription(Twist, "cmd/velocity", self.cmd_vel_cb, 10)
@@ -495,8 +545,11 @@ def _run_ros_node() -> None:
             self.create_subscription(String, "/autonomy/terrain_status", self.terrain_status_cb, 10)
             self.create_subscription(String, "/perception/flag_candidates", self.flag_candidates_cb, 10)
             self.create_subscription(String, "/autonomy/state", self.autonomy_state_cb, 10)
+            self.create_subscription(String, "/autonomy/nav_mission/state", self.nav_mission_state_cb, 10)
+            self.create_subscription(String, "/autonomy/dig_sequence/state", self.dig_sequence_state_cb, 10)
             self.pub_velocity = self.create_publisher(Twist, "cmd/velocity", 10)
             self.pub_zone_mark = self.create_publisher(String, "/autonomy/zone_mark", 10)
+            self.pub_navigation_active = self.create_publisher(Bool, "/autonomy/navigation_active", 10)
             self.create_timer(1.0, _tick_system)
             self.create_timer(0.05, self.process_command_queue)
             self.get_logger().info("Mission control WebSocket bridge initialized with safe commands only")
@@ -507,6 +560,12 @@ def _run_ros_node() -> None:
                 self.pub_velocity.publish(stop_msg)
             _state.baseline_vel = 0.0
             _state.touch_topic("cmd/velocity")
+
+        def _clear_navigation_active(self) -> None:
+            _state.navigation_active = False
+            m = Bool()
+            m.data = False
+            self.pub_navigation_active.publish(m)
 
         def _command_result(self, command: QueuedCommand, accepted: bool, message: str) -> None:
             result = {
@@ -542,6 +601,7 @@ def _run_ros_node() -> None:
                 _state.last_decision = "Published zero velocity on cmd/velocity."
                 _state.next_transition = "Reset must be handled robot-side after physical safety check."
                 self._publish_stop_burst()
+                self._clear_navigation_active()
                 self._command_result(queued, True, "ESTOP accepted. Published zero velocity burst.")
                 return
 
@@ -553,6 +613,7 @@ def _run_ros_node() -> None:
                 _state.last_decision = "Autonomy paused and zero velocity published."
                 _state.next_transition = "Operator may teleop after verifying robot state."
                 self._publish_stop_burst()
+                self._clear_navigation_active()
                 self._command_result(queued, True, "Manual takeover accepted. Published zero velocity burst.")
                 return
 
@@ -563,6 +624,7 @@ def _run_ros_node() -> None:
                 _state.stop_reason = "Autonomy paused by operator."
                 _state.last_decision = "Published zero velocity on pause."
                 self._publish_stop_burst()
+                self._clear_navigation_active()
                 self._command_result(queued, True, "Pause accepted. Published zero velocity burst.")
                 return
 
@@ -571,7 +633,25 @@ def _run_ros_node() -> None:
                 _state.mode = "Manual"
                 _state.last_decision = "Drive stop command accepted."
                 self._publish_stop_burst()
+                self._clear_navigation_active()
                 self._command_result(queued, True, "Drive stop accepted. Published zero velocity burst.")
+                return
+
+            if command_type == "set_navigation_active":
+                if _state.estop:
+                    self._command_result(queued, False, "Rejected: ESTOP is active.")
+                    return
+                active = bool(command.get("active", False))
+                _state.navigation_active = active
+                m = Bool()
+                m.data = active
+                self.pub_navigation_active.publish(m)
+                self._command_result(
+                    queued,
+                    True,
+                    f"Published /autonomy/navigation_active = {active}. "
+                    "Requires navigation stack and supervisor gates for motion.",
+                )
                 return
 
             if command_type == "mark_zone":
@@ -622,7 +702,7 @@ def _run_ros_node() -> None:
             self._command_result(
                 queued,
                 False,
-                f"Rejected {rejected} command. Only ESTOP, pause, manual takeover, drive stop, and zone marking are enabled.",
+                f"Rejected {rejected} command. Only ESTOP, pause, manual takeover, drive stop, zone marking, and set_navigation_active are enabled.",
             )
 
         def camera_cb(self, topic: str, msg):
@@ -692,6 +772,14 @@ def _run_ros_node() -> None:
 
         def autonomy_state_cb(self, msg):
             _state.autonomy_state = _parse_json_message(msg.data)
+            _schedule_snapshot()
+
+        def nav_mission_state_cb(self, msg):
+            _state.nav_mission_state = _parse_json_message(msg.data)
+            _schedule_snapshot()
+
+        def dig_sequence_state_cb(self, msg):
+            _state.dig_sequence_state = _parse_json_message(msg.data)
             _schedule_snapshot()
 
         def log_cb(self, msg):

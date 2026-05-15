@@ -67,11 +67,19 @@ def compute_shadow_tick(
     health_timeout_sec: float,
     terrain_timeout_sec: float,
     flag_timeout_sec: float,
+    navigation_active: bool,
 ) -> Dict[str, Any]:
     """
+    Nav autonomy readiness FSM (``/autonomy/state`` ``state`` field).
+
+    Priority: operator hold → perception safety → perception freshness → pose
+    → terrain validity → terrain freshness → dig mark → dump hint/mark
+    → short-segment controller armed.
+
     Returns: confidence, state, mode, stop_reason, last_decision, next_transition
     (mirrors one supervisor tick when not in ESTOP).
     """
+    has_perception = perception_health is not None
     perception_ok = bool(perception_health and perception_health.get("safety_ok"))
     terrain_ok = bool(terrain_status and terrain_status.get("ok"))
     odom_ok = monotonic_fresh(last_odom_time, now_mono, health_timeout_sec)
@@ -93,7 +101,6 @@ def compute_shadow_tick(
     next_tr = next_transition_hint(flags_fresh=flags_fresh, flag_candidates=flag_candidates)
 
     if paused:
-        # Do not include stop_reason — paused tick preserves prior operator/context reason.
         return {
             "confidence": confidence,
             "state": "PAUSED",
@@ -101,48 +108,89 @@ def compute_shadow_tick(
             "last_decision": "Holding because operator paused or took manual control.",
             "next_transition": next_tr,
         }
-    if not perception_ok or not perception_fresh:
+
+    if not has_perception or not perception_ok:
         return {
             "confidence": confidence,
-            "state": "HEALTH_CHECK",
+            "state": "PERCEPTION_FAULT",
             "mode": "Manual",
-            "stop_reason": "Perception health is missing, stale, or unsafe.",
-            "last_decision": "Do not arm autonomy.",
+            "stop_reason": "Perception health is missing or safety_ok is false.",
+            "last_decision": "Resolve RGB/depth perception health before autonomy.",
             "next_transition": next_tr,
         }
+    if not perception_fresh:
+        return {
+            "confidence": confidence,
+            "state": "PERCEPTION_STALE",
+            "mode": "Manual",
+            "stop_reason": "Perception health message is older than the health timeout.",
+            "last_decision": "Refresh /autonomy/perception_health stream.",
+            "next_transition": next_tr,
+        }
+
     if not odom_ok:
         return {
             "confidence": confidence,
-            "state": "HEALTH_CHECK",
+            "state": "LOCALIZATION_LOST",
             "mode": "Manual",
-            "stop_reason": "Odom/localization is not fresh.",
-            "last_decision": "Do not navigate without pose freshness.",
+            "stop_reason": "Odom/localization is not fresh within the health timeout.",
+            "last_decision": "Do not navigate without a current pose estimate.",
             "next_transition": next_tr,
         }
-    if not terrain_ok or not terrain_fresh:
+
+    if terrain_status is None or not terrain_ok:
         return {
             "confidence": confidence,
-            "state": "HEALTH_CHECK",
+            "state": "TERRAIN_FAULT",
             "mode": "Manual",
-            "stop_reason": "Local terrain grid is missing or unhealthy.",
-            "last_decision": "Do not drive without local hazard layer.",
+            "stop_reason": "Local terrain grid is missing or reports not ok.",
+            "last_decision": "Repair /autonomy/terrain_status and local_terrain_grid pipeline.",
             "next_transition": next_tr,
         }
-    if not dump_known or not dig_known:
+    if not terrain_fresh:
         return {
             "confidence": confidence,
-            "state": "WAIT_FOR_ZONE_MARKS",
+            "state": "TERRAIN_STALE",
+            "mode": "Manual",
+            "stop_reason": "Terrain status is older than the terrain timeout.",
+            "last_decision": "Wait for a fresh local hazard classification pass.",
+            "next_transition": next_tr,
+        }
+
+    if not dig_known:
+        return {
+            "confidence": confidence,
+            "state": "AWAIT_MARK_DIG",
             "mode": "Assisted",
-            "stop_reason": "Need dig and dump zone marks or detections.",
-            "last_decision": "Ask operator to mark zones or confirm flag detections.",
+            "stop_reason": "Dig zone has not been operator-marked in /autonomy/zone_mark.",
+            "last_decision": "Mark dig zone before short-segment nav.",
+            "next_transition": next_tr,
+        }
+    if not dump_known:
+        return {
+            "confidence": confidence,
+            "state": "AWAIT_MARK_DUMP",
+            "mode": "Assisted",
+            "stop_reason": "Dump zone or dump flag detection is still unknown.",
+            "last_decision": "Mark dump zone or confirm a dump flag candidate.",
+            "next_transition": next_tr,
+        }
+
+    if not navigation_active:
+        return {
+            "confidence": confidence,
+            "state": "NAV_READY",
+            "mode": "Assisted",
+            "stop_reason": "",
+            "last_decision": "All nav autonomy gates pass; arm /autonomy/navigation_active to run the local planner.",
             "next_transition": next_tr,
         }
     return {
         "confidence": confidence,
-        "state": "PAUSED",
+        "state": "NAV_ACTIVE",
         "mode": "Assisted",
-        "stop_reason": "All prerequisites look plausible, but motion remains disabled.",
-        "last_decision": "Ready for short-segment autonomy implementation.",
+        "stop_reason": "",
+        "last_decision": "Short-segment navigation is armed; navigation_controller may publish /autonomy/navigation_twist when gated.",
         "next_transition": next_tr,
     }
 
@@ -182,18 +230,18 @@ def parse_autonomy_command(command: str, allow_motion: bool) -> Tuple[bool, Dict
             "estop": False,
             "paused": False,
             "mode": "Manual",
-            "state": "HEALTH_CHECK",
-            "stop_reason": "Supervisor reset; checking health.",
+            "state": "PERCEPTION_FAULT",
+            "stop_reason": "Supervisor reset; re-running nav autonomy checks from perception tier.",
         }
     if cmd == "arm":
         if not allow_motion:
             return False, {
                 "last_decision": "Arm rejected: allow_motion is false.",
-                "stop_reason": "Shadow mode only; autonomous drive is disabled.",
+                "stop_reason": "Readiness-only mode; autonomous drive is disabled.",
             }
         return False, {
             "mode": "Auto",
-            "state": "WAIT_FOR_ZONE_MARKS",
-            "stop_reason": "Armed, waiting for zones.",
+            "state": "AWAIT_MARK_DIG",
+            "stop_reason": "Armed; waiting for dig/dump marks and navigation arm.",
         }
     return False, {"last_decision": f"Ignored unknown autonomy command: {command}"}

@@ -39,7 +39,7 @@ class State(Enum):
     Subscriptions:
     /path/path: Path, path to the goal provided by path_planner. Dynamically re-plans
                       based on updated map information.
-    /odom_true:      Odometry, odom information provided by T265 or simulator
+    /odom_true:      Odometry, odom information from localization or simulator
 
     Publishes:
     /path/goal: Pose, path_planner uses this as its goal when plotting paths.

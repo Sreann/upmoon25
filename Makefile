@@ -39,7 +39,7 @@ output ?= field_photos/out
 # Prefer global/Corepack `pnpm`; otherwise bootstrap pinned pnpm via npx (no global install needed).
 MISSION_PNPM := $(if $(shell command -v pnpm 2>/dev/null),pnpm,npx --yes pnpm@9)
 
-.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-firmware test-offline ci tune-flags run kill logs check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
+.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-demo mission-control-demo-copy mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-firmware test-offline ci tune-flags run kill logs lunar-logs-pack lunar-logs-path check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
 
 help:
 	@echo "upmoon25-auto Docker Management"
@@ -55,16 +55,21 @@ help:
 	@echo "  make tune-flags input=... output=... - Batch flag detection on images (no ROS; defaults field_photos/in out)"
 	@echo "  make mission-bridge - Launch the safe-command mission-control ROS bridge"
 	@echo "  make mission-control - Launch the new web mission-control app"
+	@echo "  make mission-control-demo - mission-control with fake data only + 0.0.0.0:5173 (Tailscale-friendly)"
+	@echo "  make mission-control-demo-copy - rsync mission-control to ~/mission-control-demo (no node_modules)"
 	@echo "  make mission-control-install - pnpm install (mission-control, frozen lockfile)"
 	@echo "  make mission-control-build - Production build (mission-control)"
 	@echo "  make mission-control-offline-prep - install + build for airgapped Jetson deploy"
-	@echo "  make autonomy-stack grid=[coarse|standard|fine] - Launch shadow-mode perception/autonomy nodes"
+	@echo "  make autonomy-stack grid=[coarse|standard|fine] - Launch shadow perception/autonomy (+ nav controller by default inside container)"
 	@echo "  make lint       - ty check + ruff + mission-control eslint"
 	@echo "  make test       - lint + all offline Python unit tests"
 	@echo "  make test-firmware - Native encoder quadrature unit tests (g++; no ROS)"
 	@echo "  make test-offline - Run hardware-free backend/bridge unit tests only"
 	@echo "  make ci         - lint + mission-control production build + offline tests (no Jetson)"
-	@echo "  make run profile=[robot|rc|autonomy|dig] rotary=<ticks> - Lunar profiles inside container (dig requires rotary)"
+	@echo "  make run profile=[robot|rc|autonomy|nav|nav-dig|test-encoder|dig] rotary=<ticks> - lunar run in Docker (dig needs rotary=; nav-dig needs LUNAR_RUN_FLAGS='--calibrated-rotary N')"
+	@echo "  make lunar-logs-pack - Zip .lunar/runs/latest (combined.log, RUN_META.txt, optional rosbag from lunar run)"
+	@echo "  make lunar-logs-path - Print path of .lunar/runs/latest"
+	@echo "  (Optional: LUNAR_RUN_FLAGS='--no-session-bag' or '--session-bag-depth' on make run)"
 	@echo "  make kill     - Stop all simulation and ROS processes"
 	@echo "  make logs     - View logs"
 	@echo "  make check    - Unified health audit"
@@ -106,7 +111,13 @@ mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
 
 mission-control:
-	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) dev --host 0.0.0.0 --port 8501
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) dev -- --host 0.0.0.0 --port 8501
+
+mission-control-demo:
+	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) run dev:demo
+
+mission-control-demo-copy:
+	bash "$(MISSION_CONTROL_DIR)/scripts/copy-demo-dashboard.sh"
 
 mission-control-build:
 	cd "$(MISSION_CONTROL_DIR)" && $(MISSION_PNPM) build
@@ -140,17 +151,20 @@ tune-flags:
 	@mkdir -p "$(ROOT)/$(output)"
 	cd "$(ROOT)" && PYTHONPATH="$(ROOT)/src/backend" uv run --project lunar python "$(ROOT)/src/backend/scripts/tune_flags_on_images.py" --input "$(ROOT)/$(input)" --output "$(ROOT)/$(output)"
 
-# profile: robot | rc | autonomy | dig — rotary required when profile=dig
+# profile: robot | rc | autonomy | nav | dig — rotary required when profile=dig
 rotary ?=
+
+# Optional extra args to `lunar run` (e.g. --no-session-bag or --session-bag-depth).
+LUNAR_RUN_FLAGS ?=
 
 run:
 ifneq ($(strip $(profile)),dig)
-	docker exec -it upmoon25_ros lunar run $(profile)
+	docker exec -it upmoon25_ros lunar run $(profile) $(LUNAR_RUN_FLAGS)
 else
 ifeq ($(strip $(rotary)),)
 	$(error make run profile=dig requires rotary=<positive_ticks>)
 endif
-	docker exec -it upmoon25_ros lunar run dig --calibrated-rotary $(rotary)
+	docker exec -it upmoon25_ros lunar run dig --calibrated-rotary $(rotary) $(LUNAR_RUN_FLAGS)
 endif
 
 kill:
@@ -158,6 +172,19 @@ kill:
 
 logs:
 	docker exec -it upmoon25_ros lunar logs
+
+# Pack the most recent `lunar run` session (same tree as `lunar run` prints: Session folder).
+# Requires a background profile started with `lunar run` (e.g. make run profile=nav); writes under .lunar/
+lunar-logs-pack:
+	@LATEST="$(ROOT)/.lunar/runs/latest"; \
+	if [ ! -e "$$LATEST" ]; then echo "No $$LATEST — start a background lunar run first (e.g. make run profile=nav)." >&2; exit 1; fi; \
+	OUT="$(ROOT)/.lunar/lunar_session_$$(date +%Y%m%d_%H%M%S).zip"; \
+	( cd "$$LATEST" && zip -rq "$$OUT" . ) && echo "Wrote $$OUT"
+
+lunar-logs-path:
+	@LATEST="$(ROOT)/.lunar/runs/latest"; \
+	if [ ! -e "$$LATEST" ]; then echo "No $$LATEST yet." >&2; exit 1; fi; \
+	realpath "$$LATEST" 2>/dev/null || readlink "$$LATEST" || echo "$$LATEST"
 
 check:
 	docker exec -it upmoon25_ros lunar check

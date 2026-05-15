@@ -129,9 +129,8 @@ Do not send raw ROS image messages through the general mission snapshot.
 Use separate streams:
 
 ```text
-WS /camera/ws/front
+WS /camera/ws/rgb
 WS /camera/ws/rear
-WS /camera/ws/tracking
 ```
 
 or:
@@ -212,5 +211,6 @@ The frontend includes `MockRobotBridge` with scenarios:
 - `nominal`
 - `degraded`
 - `offline`
+- `terrain_lab` (large synthetic local terrain cells for UI validation)
 
 Use these scenarios to develop fallback states before the live bridge exists.
