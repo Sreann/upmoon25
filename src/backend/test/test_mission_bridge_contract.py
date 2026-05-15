@@ -128,6 +128,7 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
         "dig_arm": False,
         "ir_value": 17,
         "ir_target": 17,
+        "ir_setup_mode": "le",
         "encoder_value": 0,
         "encoder_target": 120,
         "encoder_topic": "/sensor/encoder/left",
@@ -155,6 +156,7 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
     assert ds["useLocalTerrainGrid"] is True
     assert ds["terrainForwardOk"] is False
     assert ds["terrainGateForward"] == "blocked"
+    assert ds["irSetupMode"] == "le"
     mission_bridge._state.dig_sequence_state = None
 
 

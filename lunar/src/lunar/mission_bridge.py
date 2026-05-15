@@ -248,6 +248,7 @@ def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | 
         "digArm": bool(raw.get("dig_arm", False)),
         "irValue": raw.get("ir_value"),
         "irTarget": raw.get("ir_target"),
+        "irSetupMode": raw.get("ir_setup_mode"),
         "encoderValue": raw.get("encoder_value"),
         "encoderTarget": raw.get("encoder_target"),
         "encoderTopic": raw.get("encoder_topic"),
