@@ -27,6 +27,12 @@ elapses.
 The conveyor (``cmd/conveyor``) is commanded **only** during each dump timer window and is
 explicitly zeroed outside ``CONVEYOR_DUMP`` so it restarts cleanly every cycle.
 
+While the conveyor runs and while the optional post-dump IR gate waits, the robot **continues to
+creep forward** (terrain-gated, same ``forward_linear`` as ``DRIVE_FORWARD``) so digging and
+motion overlap. Encoder mode stops that creep once the forward leg encoder target is reached;
+timed-drive mode does not creep during the dump timer (timing is per official forward leg only)
+but still creeps after the dump during an IR gate wait.
+
 The post-dump bucket position bump uses the same optional IR gate as setup (unless
 ``ir_bucket_gate_min_ir_drop`` is ``0``). When that gate is active, ``phase_clock`` is reset so
 ``phase_timeout_sec`` applies to the gate wait separately from the conveyor dump window.
@@ -312,6 +318,30 @@ class DigSequenceController(Node):
         t = Twist()
         t.linear.x = float(linear_x)
         self.pub_vel.publish(t)
+
+    def _publish_forward_creep_during_conveyor_phase(self) -> None:
+        """
+        Forward cmd/velocity during CONVEYOR_DUMP (dump timer and/or post-dump IR wait).
+
+        Encoder mode: stop creeping if the forward-leg target is already reached (same check as
+        DRIVE_FORWARD). Timed-drive mode: caller should only use this after the dump timer so the
+        timed forward leg still starts clean; during the dump timer, timed mode stays still.
+        """
+        if not self._timed_drive_only:
+            if encoder_forward_target_reached(
+                self.encoder_value,
+                self.calibrated_rotary,
+                self.encoder_tolerance,
+                self.forward_encoder_increases,
+            ):
+                self._stop_motion()
+                return
+        allow, detail = self._terrain_gate_forward()
+        if not allow:
+            self._maybe_warn_terrain(f"forward blocked ({detail})")
+            self._stop_motion()
+            return
+        self._publish_vel(self.forward_linear)
 
     def _phase_elapsed(self) -> float:
         return (self.get_clock().now() - self.phase_clock).nanoseconds / 1e9
@@ -614,6 +644,8 @@ class DigSequenceController(Node):
                 elapsed_sec=elapsed_gate,
                 timeout_sec=self.ir_bucket_gate_timeout_sec,
             ):
+                # Belt still digging; creep forward while waiting for IR (all drive modes).
+                self._publish_forward_creep_during_conveyor_phase()
                 return
             self._ir_bucket_gate_waiting = False
             self._apply_post_cycle_bump_and_maybe_repeat()
@@ -624,6 +656,9 @@ class DigSequenceController(Node):
 
         now = self.get_clock().now()
         if now < self.conveyor_until:
+            # Overlap dump with forward creep (encoder rigs only — timed legs stay time-bounded).
+            if not self._timed_drive_only:
+                self._publish_forward_creep_during_conveyor_phase()
             return
         if self._conveyor_end_applied:
             return
