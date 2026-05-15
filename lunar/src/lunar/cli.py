@@ -14,7 +14,7 @@ import tty
 from pathlib import Path
 from dataclasses import asdict
 from enum import Enum
-from typing import Optional, TextIO, cast
+from typing import Any, Optional, TextIO, cast
 
 import typer
 import serial.tools.list_ports
@@ -75,6 +75,37 @@ def _short_segment_nav_stack_commands(
     if include_nav_mission:
         cmds.append(("nav_mission_executor", "ros2 run backend nav_mission_executor"))
     return cmds
+
+
+def _resolve_dig_drive_params(
+    *,
+    profile_label: str,
+    calibrated_rotary: Optional[int],
+    dig_timing_ms: Optional[int],
+) -> tuple[bool, int]:
+    """Return (use_timed_legs_ms, value) where value is ms per drive leg or encoder ticks."""
+    use_ms = dig_timing_ms is not None and int(dig_timing_ms) > 0
+    use_enc = calibrated_rotary is not None and int(calibrated_rotary) > 0
+    if use_ms and use_enc:
+        typer.secho(
+            f"Profile '{profile_label}' accepts only one of --calibrated-rotary or --dig-timing-ms.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if not use_ms and not use_enc:
+        typer.secho(
+            f"Profile '{profile_label}' requires --calibrated-rotary <positive_ticks> "
+            "or --dig-timing-ms <positive_ms> (same ms for forward and backward drive legs; no encoder).",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    if use_ms:
+        assert dig_timing_ms is not None
+        return True, int(dig_timing_ms)
+    assert calibrated_rotary is not None
+    return False, int(calibrated_rotary)
 
 
 class ControlTarget(str, Enum):
@@ -963,9 +994,10 @@ def run(
             "start→dig mission executor (publish /autonomy/nav_mission/command start after marking dig zone).\n"
             "- nav-dig: Same as nav, plus dig_sequence in the background waiting on /autonomy/dig_arm "
             "(nav profile transitions into dig when the mission reaches dig handoff). "
-            "Requires --calibrated-rotary.\n"
+            "Requires --calibrated-rotary or --dig-timing-ms.\n"
             "- dig: Dig autonomy alone — foreground ``dig_sequence`` (use after robot is up; "
-            "for nav→dig use nav-dig instead). Writes ``.lunar/runs/...`` logs and optional rosbag like other profiles.\n\n"
+            "for nav→dig use nav-dig instead). Writes ``.lunar/runs/...`` logs and optional rosbag like other profiles. "
+            "Drive phases: --calibrated-rotary (encoder) or --dig-timing-ms (same timed forward/back).\n\n"
             "Other profiles:\n"
             "- rc: Joystick / RViz (optional --record).\n"
             "- autonomy: Planner / transport / command stack.\n"
@@ -988,7 +1020,15 @@ def run(
     calibrated_rotary: Optional[int] = typer.Option(
         None,
         "--calibrated-rotary",
-        help="dig / nav-dig: Wheel encoder ticks for dig_sequence forward phase (positive target).",
+        help="dig / nav-dig: Wheel encoder ticks for forward phase (omit if using --dig-timing-ms).",
+    ),
+    dig_timing_ms: Optional[int] = typer.Option(
+        None,
+        "--dig-timing-ms",
+        help=(
+            "dig / nav-dig: Milliseconds for each timed drive leg (forward and backward; encoders unused). "
+            "Alternative to --calibrated-rotary."
+        ),
     ),
     encoder_side: str = typer.Option(
         "left",
@@ -1041,16 +1081,13 @@ def run(
         )
 
     elif profile == RunProfile.NAV_DIG:
-        if calibrated_rotary is None or calibrated_rotary <= 0:
-            typer.secho(
-                "Profile 'nav-dig' requires --calibrated-rotary <positive_ticks> "
-                "(dig_sequence forward phase; same as standalone dig profile).",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=2)
+        use_ms, fwd_val = _resolve_dig_drive_params(
+            profile_label="nav-dig",
+            calibrated_rotary=calibrated_rotary,
+            dig_timing_ms=dig_timing_ms,
+        )
         side = encoder_side.strip().lower()
-        if side not in ("left", "right"):
+        if not use_ms and side not in ("left", "right"):
             typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
         cmds.extend(
@@ -1060,13 +1097,18 @@ def run(
                 include_nav_mission=True,
             )
         )
+        if use_ms:
+            dig_cmd_suffix = f"-p timed_drive_ms:={fwd_val}"
+        else:
+            dig_cmd_suffix = (
+                f"-p calibrated_rotary:={fwd_val} -p encoder_side:={shlex.quote(side)}"
+            )
         cmds.append(
             (
                 "dig_sequence",
                 "ros2 run backend dig_sequence --ros-args "
                 "-p wait_for_nav_dig_arm:=true "
-                f"-p calibrated_rotary:={int(calibrated_rotary)} "
-                f"-p encoder_side:={shlex.quote(side)}",
+                f"{dig_cmd_suffix}",
             )
         )
 
@@ -1074,16 +1116,13 @@ def run(
         cmds.append(("encoder_test", "ros2 launch frontend encoder_test_launch.py"))
 
     elif profile == RunProfile.DIG:
-        if calibrated_rotary is None or calibrated_rotary <= 0:
-            typer.secho(
-                "Profile 'dig' requires --calibrated-rotary <positive_ticks> "
-                "(forward phase stops near this encoder reading).",
-                fg=typer.colors.RED,
-                err=True,
-            )
-            raise typer.Exit(code=2)
+        use_ms, fwd_val = _resolve_dig_drive_params(
+            profile_label="dig",
+            calibrated_rotary=calibrated_rotary,
+            dig_timing_ms=dig_timing_ms,
+        )
         side = encoder_side.strip().lower()
-        if side not in ("left", "right"):
+        if not use_ms and side not in ("left", "right"):
             typer.secho("--encoder-side must be 'left' or 'right'.", fg=typer.colors.RED, err=True)
             raise typer.Exit(code=2)
         dig_cmd_list = [
@@ -1092,11 +1131,11 @@ def run(
             "backend",
             "dig_sequence",
             "--ros-args",
-            "-p",
-            f"calibrated_rotary:={calibrated_rotary}",
-            "-p",
-            f"encoder_side:={side}",
         ]
+        if use_ms:
+            dig_cmd_list.extend(["-p", f"timed_drive_ms:={fwd_val}"])
+        else:
+            dig_cmd_list.extend(["-p", f"calibrated_rotary:={fwd_val}", "-p", f"encoder_side:={side}"])
         dig_shell_cmd = " ".join(shlex.quote(x) for x in dig_cmd_list)
 
         if dry_run:
@@ -1715,10 +1754,13 @@ def check(
         pass
 
     import concurrent.futures
+    tomli_loader: Any
     try:
-        import tomli
+        import tomli as _tomli_mod
+
+        tomli_loader = _tomli_mod
     except ImportError:
-        tomli = None
+        tomli_loader = None
 
     def run_cmd(cmd, timeout=2.0):
         try:
@@ -1728,7 +1770,7 @@ def check(
 
     # --- Hardware Checks ---
     hw_report = []
-    if tomli is None:
+    if tomli_loader is None:
          hw_report.append({"name": "TOML Support", "path": "tomli", "status": "MISSING (Pip install failed?)"})
     else:
         hw_config_path = root / "lunar" / "hardware.toml"
@@ -1736,7 +1778,7 @@ def check(
              hw_report.append({"name": "Config File", "path": str(hw_config_path), "status": "MISSING"})
         else:
             with open(hw_config_path, "rb") as f:
-                hw_data = tomli.load(f)
+                hw_data = tomli_loader.load(f)
             
             on_jetson = _on_jetson()
             realsense = _detect_realsense_devices()

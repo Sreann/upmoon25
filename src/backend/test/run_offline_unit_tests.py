@@ -27,6 +27,7 @@ TEST_FILES = [
     ROOT / "src" / "backend" / "test" / "test_autonomy_topic_contracts.py",
     ROOT / "src" / "backend" / "test" / "test_nav_mission_pure.py",
     ROOT / "src" / "backend" / "test" / "test_encoder_drive_sequence.py",
+    ROOT / "src" / "backend" / "test" / "test_dig_sequence_params.py",
     ROOT / "src" / "backend" / "test" / "test_dig_sequence_terrain_pure.py",
 ]
 

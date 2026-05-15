@@ -13,8 +13,13 @@ If IR reaches the target first, bucket chain stops for the drive phases. If the 
 position safety cap is reached first (without IR), bucket chain stays on until the full
 sequence ends (abort / timeout / normal completion).
 
-Prerequisite: frontend stack publishing /sensor/ir, wheel encoders, and
+Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
+without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
+when the encoder reads ~zero.
+
+Prerequisite: frontend stack publishing /sensor/ir and
 subscribed to cmd/velocity, cmd/bucket_pos, cmd/bucket_vel, cmd/conveyor.
+Encoder topics are only needed when ``timed_drive_ms`` is 0.
 For terrain gating, run ``local_terrain_grid`` (e.g. ``lunar run nav``) so the grid topic exists.
 """
 
@@ -32,6 +37,12 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from std_msgs.msg import Bool, Int16, Int32, String
 
+from backend.dig_sequence_params import (
+    encoder_forward_target_reached,
+    encoder_returned_home,
+    merge_timed_drive_ms,
+    timed_leg_complete,
+)
 from backend.navigation_controller_pure import plan_corridor_step
 
 
@@ -51,6 +62,9 @@ class DigSequenceController(Node):
         super().__init__("dig_sequence")
 
         self.declare_parameter("calibrated_rotary", 0)
+        # When > 0, forward and backward drive legs each run for this duration (encoder unused).
+        self.declare_parameter("timed_drive_ms", 0)
+        self.declare_parameter("forward_drive_ms", 0)  # deprecated; same meaning as timed_drive_ms if timed_drive_ms unset
         self.declare_parameter("encoder_side", "left")
         self.declare_parameter("encoder_tolerance", 2)
         self.declare_parameter("forward_encoder_increases", True)
@@ -74,11 +88,18 @@ class DigSequenceController(Node):
         self.declare_parameter("terrain_unknown_ratio_max", 0.45)
 
         self.calibrated_rotary = int(self.get_parameter("calibrated_rotary").value)
+        td_raw = max(0, int(self.get_parameter("timed_drive_ms").value))
+        legacy_fwd = max(0, int(self.get_parameter("forward_drive_ms").value))
+        self.timed_drive_ms = merge_timed_drive_ms(td_raw, legacy_fwd)
+        if legacy_fwd > 0 and td_raw > 0 and legacy_fwd != td_raw:
+            self.get_logger().warn("Both timed_drive_ms and forward_drive_ms set; using timed_drive_ms.")
+        self._timed_drive_only = self.timed_drive_ms > 0
+
         enc_side = str(self.get_parameter("encoder_side").value).strip().lower()
         if enc_side not in {"left", "right"}:
             self.get_logger().warn("encoder_side must be 'left' or 'right'; defaulting to 'left'.")
             enc_side = "left"
-        self.encoder_topic = f"/sensor/encoder/{enc_side}"
+        self.encoder_topic = "" if self._timed_drive_only else f"/sensor/encoder/{enc_side}"
 
         self.encoder_tolerance = max(0, int(self.get_parameter("encoder_tolerance").value))
         self.forward_encoder_increases = bool(self.get_parameter("forward_encoder_increases").value)
@@ -103,8 +124,11 @@ class DigSequenceController(Node):
         self._had_terrain_grid = False
         self._last_terrain_warn = 0.0
 
-        if self.calibrated_rotary <= 0:
-            raise RuntimeError("Parameter 'calibrated_rotary' must be set to a positive tick target.")
+        if self.calibrated_rotary <= 0 and self.timed_drive_ms <= 0:
+            raise RuntimeError(
+                "Set 'calibrated_rotary' to a positive tick target, or set 'timed_drive_ms' > 0 for "
+                "time-based forward and backward drive legs."
+            )
 
         sens_qos = QoSProfile(depth=3, reliability=2, history=1, durability=2)
 
@@ -119,7 +143,8 @@ class DigSequenceController(Node):
         self.encoder_value = 0
 
         self.create_subscription(Int16, "/sensor/ir", self._on_ir, sens_qos)
-        self.create_subscription(Int32, self.encoder_topic, self._on_encoder, sens_qos)
+        if not self._timed_drive_only:
+            self.create_subscription(Int32, self.encoder_topic, self._on_encoder, sens_qos)
         if self._use_local_terrain_grid:
             self.create_subscription(OccupancyGrid, self._grid_topic, self._grid_cb, 10)
 
@@ -141,9 +166,13 @@ class DigSequenceController(Node):
 
         self.timer = self.create_timer(self.control_dt, self._tick)
         ginfo = f"local_terrain_grid={self._grid_topic}" if self._use_local_terrain_grid else "local_terrain_grid=off"
+        if self._timed_drive_only:
+            fwd_desc = f"timed drive legs {self.timed_drive_ms} ms each (no encoder)"
+        else:
+            fwd_desc = f"encoder forward target {self.calibrated_rotary} on {self.encoder_topic}"
         self.get_logger().info(
             f"dig_sequence start (state={self.state.name}): IR→{self.ir_target}, bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
-            f"encoder target {self.calibrated_rotary} on {self.encoder_topic}, repeat while counter<={self.max_cycles_le}, {ginfo}"
+            f"{fwd_desc}, repeat while counter<={self.max_cycles_le}, {ginfo}"
         )
 
     def _grid_cb(self, msg: OccupancyGrid) -> None:
@@ -256,6 +285,8 @@ class DigSequenceController(Node):
             "encoder_value": int(self.encoder_value),
             "encoder_target": int(self.calibrated_rotary),
             "encoder_topic": self.encoder_topic,
+            "timed_drive_ms": int(self.timed_drive_ms),
+            "drive_uses_encoder": not self._timed_drive_only,
             "cycle_counter": int(self.cycle_counter),
             "max_cycles_le": int(self.max_cycles_le),
             "bucket_pos_commanded": int(self.bucket_pos_commanded),
@@ -356,17 +387,27 @@ class DigSequenceController(Node):
             self.ir_last_step_time = self.get_clock().now()
 
     def _tick_drive_forward(self) -> None:
-        reached = (
-            self.encoder_value >= self.calibrated_rotary - self.encoder_tolerance
-            if self.forward_encoder_increases
-            else self.encoder_value <= self.calibrated_rotary + self.encoder_tolerance
-        )
-        if reached:
-            self.get_logger().info(f"Encoder {self.encoder_value} reached forward target ~{self.calibrated_rotary}.")
-            self._stop_motion()
-            self.state = DigState.DRIVE_BACK
-            self._reset_phase_clock()
-            return
+        if self._timed_drive_only:
+            reached = timed_leg_complete(self._phase_elapsed(), self.timed_drive_ms)
+            if reached:
+                self.get_logger().info(f"Forward phase finished after {self.timed_drive_ms} ms (timed).")
+                self._stop_motion()
+                self.state = DigState.DRIVE_BACK
+                self._reset_phase_clock()
+                return
+        else:
+            reached_enc = encoder_forward_target_reached(
+                self.encoder_value,
+                self.calibrated_rotary,
+                self.encoder_tolerance,
+                self.forward_encoder_increases,
+            )
+            if reached_enc:
+                self.get_logger().info(f"Encoder {self.encoder_value} reached forward target ~{self.calibrated_rotary}.")
+                self._stop_motion()
+                self.state = DigState.DRIVE_BACK
+                self._reset_phase_clock()
+                return
         allow, detail = self._terrain_gate_forward()
         if not allow:
             self._maybe_warn_terrain(f"forward blocked ({detail})")
@@ -375,7 +416,17 @@ class DigSequenceController(Node):
         self._publish_vel(self.forward_linear)
 
     def _tick_drive_back(self) -> None:
-        if abs(self.encoder_value) <= self.encoder_tolerance:
+        if self._timed_drive_only:
+            if timed_leg_complete(self._phase_elapsed(), self.timed_drive_ms):
+                self.get_logger().info(f"Backward phase finished after {self.timed_drive_ms} ms (timed).")
+                self._stop_motion()
+                self.state = DigState.CONVEYOR_DUMP
+                self._reset_phase_clock()
+                self._conveyor_end_applied = False
+                self.pub_conveyor.publish(Int16(data=1))
+                self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
+                return
+        elif encoder_returned_home(self.encoder_value, self.encoder_tolerance):
             self.get_logger().info("Encoder returned to ~0.")
             self._stop_motion()
             self.state = DigState.CONVEYOR_DUMP

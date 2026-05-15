@@ -113,6 +113,8 @@ def test_dig_sequence_state_contract_keys():
         "encoder_value": 50,
         "encoder_target": 120,
         "encoder_topic": "/sensor/encoder/left",
+        "timed_drive_ms": 0,
+        "drive_uses_encoder": True,
         "cycle_counter": 0,
         "max_cycles_le": 5,
         "bucket_pos_commanded": 22,
