@@ -1,4 +1,4 @@
-"""Timed open-loop drive for encoder bring-up: forward, then backward, then stop."""
+"""Timed open-loop drive for encoder bring-up: fwd/rev/left/right, then stop."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 
 from frontend.encoder_drive_sequence import (
+    drive_cmd_for_encoder_drive_elapsed,
     encoder_drive_sequence_complete,
-    linear_x_for_encoder_drive_elapsed,
 )
 
 PUBLISH_HZ = 20.0
@@ -20,6 +20,7 @@ class EncoderDriveTest(Node):
     def __init__(self) -> None:
         super().__init__('encoder_drive_test')
         self.declare_parameter('linear_speed', 35.0)
+        self.declare_parameter('turn_speed', 30.0)
         self.declare_parameter('phase_duration_sec', 5.0)
         self.declare_parameter('stop_publish_sec', 0.8)
 
@@ -32,20 +33,22 @@ class EncoderDriveTest(Node):
 
     def _tick(self) -> None:
         speed = float(self.get_parameter('linear_speed').value)
+        turn = float(self.get_parameter('turn_speed').value)
         phase = float(self.get_parameter('phase_duration_sec').value)
         tail = float(self.get_parameter('stop_publish_sec').value)
 
         elapsed = time.monotonic() - self._t0
         msg = Twist()
-        msg.linear.x = linear_x_for_encoder_drive_elapsed(
+        msg.linear.x, msg.angular.z = drive_cmd_for_encoder_drive_elapsed(
             elapsed,
             linear_speed=speed,
+            turn_speed=turn,
             phase_duration_sec=phase,
         )
-        if msg.linear.x == 0.0 and elapsed >= 2.0 * phase:
+        if msg.linear.x == 0.0 and msg.angular.z == 0.0 and elapsed >= 4.0 * phase:
             if not self._finished_logged:
                 self.get_logger().info(
-                    f'Encoder drive test finished: forward {phase:.1f}s, backward {phase:.1f}s; publishing stop.'
+                    f'Encoder drive test finished: forward/backward/left/right {phase:.1f}s each; publishing stop.'
                 )
                 self._finished_logged = True
 
