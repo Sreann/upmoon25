@@ -22,7 +22,13 @@ to** ``ir_target``, after it has been **above** ``ir_target`` or the bucket has 
 During setup, optional ``ir_bucket_gate_min_ir_drop`` (default ``2``, ``0`` disables) **gates**
 each successive ``cmd/bucket_pos`` step: after a step, publishing the next increment waits until IR
 drops by at least that amount vs. the reading **before** the step, or ``ir_bucket_gate_timeout_sec``
-elapses. That keeps drive and further bucket commands from outrunning bucket depth / IR response.
+elapses.
+
+The conveyor (``cmd/conveyor``) is commanded **only** during each dump timer window and is
+explicitly zeroed outside ``CONVEYOR_DUMP`` so it restarts cleanly every cycle.
+
+The post-dump bucket position bump uses the same optional IR gate as setup (unless
+``ir_bucket_gate_min_ir_drop`` is ``0``).
 
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
@@ -197,6 +203,8 @@ class DigSequenceController(Node):
         self._ir_bucket_gate_t0 = 0.0
         # True while dig_sequence commands the belt through the mission (telemetry / dashboard hint).
         self.keep_bucket_chain_until_done = False
+        # After dump conveyor stops, optionally wait for IR gate before bumping bucket_pos (+1).
+        self._post_dump_bump_pending = False
 
         self.timer = self.create_timer(self.control_dt, self._tick)
         ginfo = f"local_terrain_grid={self._grid_topic}" if self._use_local_terrain_grid else "local_terrain_grid=off"
@@ -350,14 +358,60 @@ class DigSequenceController(Node):
             "ir_bucket_gate_elapsed_sec": (
                 (time.monotonic() - self._ir_bucket_gate_t0) if self._ir_bucket_gate_waiting else None
             ),
+            "post_dump_bucket_bump_pending": bool(self._post_dump_bump_pending),
         }
         m = String()
         m.data = json.dumps(payload)
         self.pub_dig_state.publish(m)
 
+    def _sync_conveyor_output(self) -> None:
+        """``cmd/conveyor`` is 1 only during each dump window; 0 in all other phases (re-stops every cycle)."""
+        if self.state != DigState.CONVEYOR_DUMP:
+            self.pub_conveyor.publish(Int16(data=0))
+            return
+        if self._post_dump_bump_pending or self._conveyor_end_applied:
+            self.pub_conveyor.publish(Int16(data=0))
+            return
+        if self.conveyor_until is None:
+            return
+        now = self.get_clock().now()
+        if now < self.conveyor_until:
+            self.pub_conveyor.publish(Int16(data=1))
+        else:
+            self.pub_conveyor.publish(Int16(data=0))
+
+    def _apply_post_cycle_bump_and_maybe_repeat(self) -> None:
+        self.bucket_pos_commanded += 1
+        self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
+        self.cycle_counter += 1
+        self.get_logger().info(
+            f"Post-cycle bump: bucket_pos={self.bucket_pos_commanded}, cycle_counter={self.cycle_counter}"
+        )
+        self._post_dump_bump_pending = False
+        self._ir_bucket_gate_waiting = False
+
+        if self.cycle_counter <= self.max_cycles_le:
+            self.get_logger().info("Repeating drive-forward phase.")
+            self.state = DigState.DRIVE_FORWARD
+            self.conveyor_until = None
+            self._conveyor_end_applied = False
+            self._reset_phase_clock()
+        else:
+            self.get_logger().info("Counter exceeded limit; terminating loop.")
+            self.keep_bucket_chain_until_done = False
+            self._post_dump_bump_pending = False
+            self._stop_motion()
+            self.pub_bucket_vel.publish(Int16(data=0))
+            self.pub_conveyor.publish(Int16(data=0))
+            self.state = DigState.DONE
+            self.timer.cancel()
+            if rclpy.ok():
+                rclpy.shutdown()
+
     def _abort(self, reason: str) -> None:
         self.get_logger().error(reason)
         self.keep_bucket_chain_until_done = False
+        self._post_dump_bump_pending = False
         self._stop_motion()
         self.pub_bucket_vel.publish(Int16(data=0))
         self.pub_conveyor.publish(Int16(data=0))
@@ -381,6 +435,7 @@ class DigSequenceController(Node):
                     self.state = DigState.SETUP_IR
                     self.setup_complete = False
                     self._reset_phase_clock()
+                self._sync_conveyor_output()
                 return
 
             if self.state == DigState.SETUP_IR:
@@ -391,6 +446,8 @@ class DigSequenceController(Node):
                 self._tick_drive_back()
             elif self.state == DigState.CONVEYOR_DUMP:
                 self._tick_conveyor()
+
+            self._sync_conveyor_output()
 
             if self.state not in (
                 DigState.WAIT_NAV_ARM,
@@ -525,7 +582,6 @@ class DigSequenceController(Node):
                 self.state = DigState.CONVEYOR_DUMP
                 self._reset_phase_clock()
                 self._conveyor_end_applied = False
-                self.pub_conveyor.publish(Int16(data=1))
                 self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
                 return
         elif encoder_returned_home(self.encoder_value, self.encoder_tolerance):
@@ -534,7 +590,6 @@ class DigSequenceController(Node):
             self.state = DigState.CONVEYOR_DUMP
             self._reset_phase_clock()
             self._conveyor_end_applied = False
-            self.pub_conveyor.publish(Int16(data=1))
             self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
             return
         allow, detail = self._terrain_gate_reverse()
@@ -545,39 +600,43 @@ class DigSequenceController(Node):
         self._publish_vel(self.backward_linear)
 
     def _tick_conveyor(self) -> None:
+        if self._post_dump_bump_pending:
+            if self.ir_bucket_gate_min_drop <= 0:
+                self._ir_bucket_gate_waiting = False
+                self._apply_post_cycle_bump_and_maybe_repeat()
+                return
+            elapsed_gate = time.monotonic() - self._ir_bucket_gate_t0
+            if not ir_bucket_step_gate_released(
+                self.ir_value,
+                self._ir_anchor_before_last_bucket_step,
+                self.ir_bucket_gate_min_drop,
+                elapsed_sec=elapsed_gate,
+                timeout_sec=self.ir_bucket_gate_timeout_sec,
+            ):
+                return
+            self._ir_bucket_gate_waiting = False
+            self._apply_post_cycle_bump_and_maybe_repeat()
+            return
+
         if self.conveyor_until is None:
-            self.pub_conveyor.publish(Int16(data=1))
             self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
 
         now = self.get_clock().now()
-        if now < self.conveyor_until or self._conveyor_end_applied:
+        if now < self.conveyor_until:
+            return
+        if self._conveyor_end_applied:
             return
 
         self._conveyor_end_applied = True
-        self.pub_conveyor.publish(Int16(data=0))
+        if self.ir_bucket_gate_min_drop > 0:
+            self._post_dump_bump_pending = True
+            self._ir_bucket_gate_waiting = True
+            self._ir_anchor_before_last_bucket_step = int(self.ir_value)
+            self._ir_bucket_gate_t0 = time.monotonic()
+            self.get_logger().info("Dump timer elapsed; conveyor off — gating post-dump bucket bump on IR.")
+            return
 
-        self.bucket_pos_commanded += 1
-        self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
-        self.cycle_counter += 1
-        self.get_logger().info(
-            f"Post-cycle bump: bucket_pos={self.bucket_pos_commanded}, cycle_counter={self.cycle_counter}"
-        )
-
-        if self.cycle_counter <= self.max_cycles_le:
-            self.get_logger().info("Repeating drive-forward phase.")
-            self.state = DigState.DRIVE_FORWARD
-            self.conveyor_until = None
-            self._reset_phase_clock()
-        else:
-            self.get_logger().info("Counter exceeded limit; terminating loop.")
-            self.keep_bucket_chain_until_done = False
-            self._stop_motion()
-            self.pub_bucket_vel.publish(Int16(data=0))
-            self.pub_conveyor.publish(Int16(data=0))
-            self.state = DigState.DONE
-            self.timer.cancel()
-            if rclpy.ok():
-                rclpy.shutdown()
+        self._apply_post_cycle_bump_and_maybe_repeat()
 
 
 def main(args=None):

@@ -257,6 +257,7 @@ def _dig_sequence_for_dashboard(raw: Dict[str, Any] | None) -> Dict[str, Any] | 
         "bucketPosCommanded": raw.get("bucket_pos_commanded"),
         "keepBucketChainUntilDone": bool(raw.get("keep_bucket_chain_until_done", False)),
         "bucketChainSpeed": raw.get("bucket_chain_speed"),
+        "postDumpBucketBumpPending": bool(raw.get("post_dump_bucket_bump_pending", False)),
         "phaseElapsedSec": raw.get("phase_elapsed_sec"),
         "conveyorRemainingSec": raw.get("conveyor_remaining_sec"),
         "useLocalTerrainGrid": bool(raw.get("use_local_terrain_grid", False)),

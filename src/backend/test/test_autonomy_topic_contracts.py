@@ -135,6 +135,7 @@ def test_dig_sequence_state_contract_keys():
         "ir_bucket_gate_waiting": False,
         "ir_anchor_before_last_bucket_step": -1,
         "ir_bucket_gate_elapsed_sec": None,
+        "post_dump_bucket_bump_pending": False,
     }
     for key in (
         "phase",
