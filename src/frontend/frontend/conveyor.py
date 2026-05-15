@@ -17,10 +17,8 @@ class Conveyor(Node):
         # Set GPIO pin number (pin numbering)
         self.gpio_pin = 36 
         GPIO.setmode(GPIO.BOARD) # Use Physical Pin Numbering
-        GPIO.setup(self.gpio_pin, GPIO.OUT)
-
-        # Initial state (High)
-        GPIO.output(self.gpio_pin, GPIO.HIGH)
+        # Drive OFF state atomically at setup to reduce LOW glitches.
+        GPIO.setup(self.gpio_pin, GPIO.OUT, initial=GPIO.HIGH)
 
         # Create subscriber to receive Boolean messages
         self.subscription = self.create_subscription(
