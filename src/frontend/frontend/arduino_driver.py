@@ -149,6 +149,10 @@ class ArduinoDriver(Node):
         self.cam_height_tf = 0.0
         self.bucket_height = 0
         self.conveyor_enabled = 0
+        self.pan_initialized = False
+        self.cam_initialized = False
+        self.bucket_initialized = False
+        self.conveyor_initialized = False
         self.dirty_until = time.monotonic() + 1.0
         self.last_serial_write = 0.0
         self.last_serial_heartbeat = 0.0
@@ -164,6 +168,8 @@ class ArduinoDriver(Node):
         # Publish initial transforms 
         self.publishActTF(0.0)
         self.publishServoTF(0.0)
+        self.write = False
+        self.dirty_until = time.monotonic()
 
     def markDirty(self, duration=0.75):
         self.write = True
@@ -171,23 +177,33 @@ class ArduinoDriver(Node):
 
     def onBucket(self, msg):
         self.bucket_height = max(0, min(100, int(msg.data)))
+        self.bucket_initialized = True
         self.markDirty()
 
     def onCam(self, msg):
         self.cam_height = max(0, min(100, int(msg.data)))
+        self.cam_initialized = True
         self.markDirty()
 
     def onConveyor(self, msg):
         self.conveyor_enabled = 1 if int(msg.data) else 0
+        self.conveyor_initialized = True
         self.markDirty()
 
     def writeActuatorState(self):
-        commands = [
-            f"{ARDUINO_PAN_PIN}:{int(round(self.cam_pan))}\n",
-            f"{ARDUINO_CAM_HEIGHT_PIN}:{int(self.cam_height)}\n",
-            f"{ARDUINO_BUCKET_PIN}:{int(self.bucket_height)}\n",
-            f"{ARDUINO_CONVEYOR_PIN}:{int(self.conveyor_enabled)}\n",
-        ]
+        commands = []
+        if self.pan_initialized:
+            commands.append(f"{ARDUINO_PAN_PIN}:{int(round(self.cam_pan))}\n")
+        if self.cam_initialized:
+            commands.append(f"{ARDUINO_CAM_HEIGHT_PIN}:{int(self.cam_height)}\n")
+        if self.bucket_initialized:
+            commands.append(f"{ARDUINO_BUCKET_PIN}:{int(self.bucket_height)}\n")
+        if self.conveyor_initialized:
+            commands.append(f"{ARDUINO_CONVEYOR_PIN}:{int(self.conveyor_enabled)}\n")
+
+        if not commands:
+            return
+
         for command in commands:
             self.ser.write(command.encode())
         self.ser.flush()
@@ -221,9 +237,17 @@ class ArduinoDriver(Node):
 
             now = time.monotonic()
             should_burst = self.write or now < self.dirty_until
+            initialized_any = (
+                self.pan_initialized
+                or self.cam_initialized
+                or self.bucket_initialized
+                or self.conveyor_initialized
+            )
             should_heartbeat = now - self.last_serial_heartbeat >= self.serial_heartbeat_period
 
-            if (should_burst and now - self.last_serial_write >= self.serial_write_period) or should_heartbeat:
+            if (should_burst and now - self.last_serial_write >= self.serial_write_period) or (
+                initialized_any and should_heartbeat
+            ):
                 self.write = False
                 if should_heartbeat:
                     self.last_serial_heartbeat = now
@@ -363,15 +387,19 @@ class ArduinoDriver(Node):
         if msg.data > 1 or msg.data < -1:
             self.pan_state = PanState.STOP
             self.cam_pan = max(PAN_MIN, min(PAN_MAX, int(msg.data)))
+            self.pan_initialized = True
             self.markDirty()
         elif (msg.data > 0):
             self.pan_state = PanState.LEFT
+            self.pan_initialized = True
             self.markDirty(duration=0.15)
         elif (msg.data < 0):
             self.pan_state = PanState.RIGHT
+            self.pan_initialized = True
             self.markDirty(duration=0.15)
         else:
             self.pan_state = PanState.STOP
+            self.pan_initialized = True
             self.markDirty(duration=0.15)
 
     def flashHexFile(self, port, hex_file):
