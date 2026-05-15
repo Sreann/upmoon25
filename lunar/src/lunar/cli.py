@@ -995,9 +995,10 @@ def run(
             "- nav-dig: Same as nav, plus dig_sequence in the background waiting on /autonomy/dig_arm "
             "(nav profile transitions into dig when the mission reaches dig handoff). "
             "Requires --calibrated-rotary or --dig-timing-ms.\n"
-            "- dig: Dig autonomy alone — foreground ``dig_sequence`` (use after robot is up; "
-            "for nav→dig use nav-dig instead). Writes ``.lunar/runs/...`` logs and optional rosbag like other profiles. "
-            "Drive phases: --calibrated-rotary (encoder) or --dig-timing-ms (same timed forward/back).\n\n"
+            "- dig: Dig autonomy alone — foreground ``dig_sequence``. Default pre-launch cleanup stops "
+            "other stacks (use `--skip-cleanup` if robot is already running and you need `/sensor/ir`). "
+            "For nav→dig prefer nav-dig. Writes ``.lunar/runs/...`` logs and optional rosbag. "
+            "Drive phases: --calibrated-rotary (encoder) or --dig-timing-ms (timed forward/back).\n\n"
             "Other profiles:\n"
             "- rc: Joystick / RViz (optional --record).\n"
             "- autonomy: Planner / transport / command stack.\n"
@@ -1040,6 +1041,16 @@ def run(
         "--grid-preset",
         help="nav profile only: Terrain grid preset — coarse, standard, or fine.",
     ),
+    skip_cleanup: bool = typer.Option(
+        False,
+        "--skip-cleanup",
+        help=(
+            "Leave existing lunar / ROS processes running before this profile starts. "
+            "Use when the robot stack is already up (e.g. keep arduino_driver and /sensor/ir), "
+            "then add dig or nav. For `dig` without --session-bag, exiting dig does not run "
+            "automatic teardown of tracked processes so the robot session stays alive."
+        ),
+    ),
 ):
     """
     Execute high-level system profiles.
@@ -1053,6 +1064,9 @@ def run(
     Each ``lunar run`` (including **dig**) creates a timestamped folder under ``.lunar/runs/`` with
     ``combined.log`` (all spawned process output), ``RUN_META.txt``, optional ``rosbag/``
     (``--session-bag``), and ``README.txt``. ``.lunar/runs/latest`` symlinks to the newest session.
+
+    Pass ``--skip-cleanup`` to avoid killing processes already running (e.g. keep ``lunar run robot``
+    and ``/sensor/ir`` while starting ``dig`` or ``nav`` from another terminal).
     """
     root = find_repo_root()
     
@@ -1151,11 +1165,17 @@ def run(
                 typer.echo(f"[session_rosbag] {bag_preview}")
             return
 
-        typer.echo("Stopping existing lunar/ROS processes...")
-        cleanup_msgs = _force_cleanup_runtime_processes()
-        for msg in cleanup_msgs:
-            typer.echo(msg)
-        time.sleep(0.5)
+        if skip_cleanup:
+            typer.secho(
+                "Skipping pre-launch cleanup (--skip-cleanup); existing ROS nodes are left running.",
+                fg=typer.colors.YELLOW,
+            )
+        else:
+            typer.echo("Stopping existing lunar/ROS processes...")
+            cleanup_msgs = _force_cleanup_runtime_processes()
+            for msg in cleanup_msgs:
+                typer.echo(msg)
+            time.sleep(0.5)
 
         ensure_env()
 
@@ -1207,7 +1227,11 @@ def run(
         except KeyboardInterrupt:
             typer.echo("\nStopped dig (KeyboardInterrupt).")
         finally:
-            kill_all()
+            # With --skip-cleanup and no session bag, state.json may still track `lunar run robot`;
+            # avoid kill_all() so the robot stack survives dig exit. Rosbag spawns replace state
+            # with only the bag writer, so kill_all() still stops the bag when session_bag is on.
+            if (not skip_cleanup) or session_bag:
+                kill_all()
 
         typer.echo(f"Dig session finished. Logs under {session_dir}")
         return
@@ -1228,11 +1252,17 @@ def run(
             typer.echo(f"[session_rosbag] {bag_preview}")
         return
 
-    typer.echo("Stopping existing lunar/ROS processes...")
-    cleanup_msgs = _force_cleanup_runtime_processes()
-    for msg in cleanup_msgs:
-        typer.echo(msg)
-    time.sleep(0.5)
+    if skip_cleanup:
+        typer.secho(
+            "Skipping pre-launch cleanup (--skip-cleanup); existing ROS nodes are left running.",
+            fg=typer.colors.YELLOW,
+        )
+    else:
+        typer.echo("Stopping existing lunar/ROS processes...")
+        cleanup_msgs = _force_cleanup_runtime_processes()
+        for msg in cleanup_msgs:
+            typer.echo(msg)
+        time.sleep(0.5)
 
     ensure_env()
     session_dir, combined_log = create_run_session(root, profile.value)
