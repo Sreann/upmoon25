@@ -6,18 +6,16 @@ const PIPELINE_WITH_ARM: DigSequencePhase[] = [
   'SETUP_IR',
   'DRIVE_FORWARD',
   'DRIVE_BACK',
-  'CONVEYOR_DUMP',
   'DONE',
 ]
 
-const PIPELINE_NO_ARM: DigSequencePhase[] = ['SETUP_IR', 'DRIVE_FORWARD', 'DRIVE_BACK', 'CONVEYOR_DUMP', 'DONE']
+const PIPELINE_NO_ARM: DigSequencePhase[] = ['SETUP_IR', 'DRIVE_FORWARD', 'DRIVE_BACK', 'DONE']
 
 const SHORT_LABEL: Record<DigSequencePhase, string> = {
   WAIT_NAV_ARM: 'NAV',
   SETUP_IR: 'IR',
   DRIVE_FORWARD: 'FWD',
   DRIVE_BACK: 'BACK',
-  CONVEYOR_DUMP: 'CONV',
   DONE: 'OK',
 }
 
@@ -45,7 +43,6 @@ function isDigSequencePhase(s: string): s is DigSequencePhase {
     s === 'SETUP_IR' ||
     s === 'DRIVE_FORWARD' ||
     s === 'DRIVE_BACK' ||
-    s === 'CONVEYOR_DUMP' ||
     s === 'DONE'
   )
 }
@@ -167,9 +164,9 @@ export function DigSequenceStateChart({ digSequence }: { digSequence: DigSequenc
             ) : null}
           </div>
           <div>
-            <span className="text-slate-500">Cycles</span>{' '}
+            <span className="text-slate-500">Cycles complete</span>{' '}
             <span className="font-mono text-slate-200">
-              {digSequence.cycleCounter ?? '—'} ≤ {digSequence.maxCyclesLe ?? '—'}
+              {digSequence.cycleCounter ?? '—'} / {digSequence.maxCyclesLe ?? '—'}
             </span>
           </div>
           <div>
@@ -186,10 +183,7 @@ export function DigSequenceStateChart({ digSequence }: { digSequence: DigSequenc
             </span>
           </div>
           <div>
-            <span className="text-slate-500">Conveyor left</span>{' '}
-            <span className="font-mono text-slate-200">
-              {digSequence.conveyorRemainingSec != null ? `${digSequence.conveyorRemainingSec.toFixed(1)} s` : '—'}
-            </span>
+            <span className="text-slate-500">Conveyor</span> <span className="font-mono text-slate-200">disabled</span>
           </div>
           {digSequence.waitForNavDigArm ? (
             <div className="sm:col-span-2">

@@ -744,6 +744,7 @@ function App() {
   const [mapName, setMapName] = useState('lunar_field')
   const [pid, setPid] = useState({ kp: 1.0, ki: 0.0, kd: 0.1 })
   const [zoneArm, setZoneArm] = useState<FieldZone['id'] | null>(null)
+  const [activeCameraId, setActiveCameraId] = useState<CameraStream['id']>('front')
 
   function setScenario(next: DemoScenario) {
     setZoneArm(null)
@@ -789,6 +790,7 @@ function App() {
   /** Live + connected bridge + stale/missing odom: block (real pose unknown). Otherwise allow UI / mock playtest. */
   const zoneMarkingBlockedByOdom = mode === 'live' && liveStatus.connected && !odomLive
   const canZonePick = displaySnapshot.mission.connected && !zoneMarkingBlockedByOdom
+  const activeCamera = displaySnapshot.cameras.find((camera) => camera.id === activeCameraId) ?? displaySnapshot.cameras[0]
 
   async function runCommand(command: Parameters<typeof sendCommand>[0]) {
     const result = await sendCommand(command)
@@ -842,10 +844,25 @@ function App() {
               </span>
             }
           >
-            <div className="grid gap-3 lg:grid-cols-3">
+            <div className="mb-3 flex flex-wrap gap-2">
               {displaySnapshot.cameras.map((camera) => (
-                <CameraFeed key={camera.id} camera={camera} wsBase={cameraWsBase} />
+                <button
+                  key={camera.id}
+                  type="button"
+                  onClick={() => setActiveCameraId(camera.id)}
+                  className={clsx(
+                    'rounded border px-2.5 py-1 text-xs',
+                    activeCamera?.id === camera.id
+                      ? 'border-cyan-400 bg-cyan-950/50 text-cyan-100'
+                      : 'border-slate-700 bg-slate-950 text-slate-400 hover:border-slate-500 hover:text-slate-200',
+                  )}
+                >
+                  {camera.name}
+                </button>
               ))}
+            </div>
+            <div>
+              {activeCamera ? <CameraFeed key={activeCamera.id} camera={activeCamera} wsBase={cameraWsBase} /> : null}
             </div>
           </Panel>
 

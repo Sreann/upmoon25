@@ -123,7 +123,7 @@ def test_build_snapshot_mission_nav_mission_key_present_when_cleared():
 
 def test_build_snapshot_mission_includes_dig_sequence_when_set():
     mission_bridge._state.dig_sequence_state = {
-        "phase": "CONVEYOR_DUMP",
+        "phase": "DRIVE_BACK",
         "wait_for_nav_dig_arm": False,
         "dig_arm": False,
         "ir_value": 17,
@@ -133,12 +133,12 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
         "encoder_target": 120,
         "encoder_topic": "/sensor/encoder/left",
         "cycle_counter": 2,
-        "max_cycles_le": 5,
+        "max_cycles_le": 3,
         "bucket_pos_commanded": 26,
         "keep_bucket_chain_until_done": False,
         "bucket_chain_speed": 40,
         "phase_elapsed_sec": 1.5,
-        "conveyor_remaining_sec": 2.1,
+        "conveyor_remaining_sec": None,
         "use_local_terrain_grid": True,
         "terrain_had_grid": True,
         "terrain_fresh": True,
@@ -156,10 +156,10 @@ def test_build_snapshot_mission_includes_dig_sequence_when_set():
     snap = mission_bridge.build_snapshot()
     ds = snap["mission"]["digSequence"]
     assert ds is not None
-    assert ds["phase"] == "CONVEYOR_DUMP"
+    assert ds["phase"] == "DRIVE_BACK"
     assert ds["waitForNavDigArm"] is False
     assert ds["encoderTopic"] == "/sensor/encoder/left"
-    assert ds["conveyorRemainingSec"] == 2.1
+    assert ds["conveyorRemainingSec"] is None
     assert ds["useLocalTerrainGrid"] is True
     assert ds["terrainForwardOk"] is False
     assert ds["terrainGateForward"] == "blocked"

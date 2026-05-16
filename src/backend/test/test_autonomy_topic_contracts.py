@@ -117,7 +117,7 @@ def test_dig_sequence_state_contract_keys():
         "timed_drive_ms": 0,
         "drive_uses_encoder": True,
         "cycle_counter": 0,
-        "max_cycles_le": 5,
+        "max_cycles_le": 3,
         "bucket_pos_commanded": 22,
         "keep_bucket_chain_until_done": False,
         "bucket_chain_speed": 40,

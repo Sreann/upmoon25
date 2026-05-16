@@ -58,7 +58,6 @@ export type DigSequencePhase =
   | 'SETUP_IR'
   | 'DRIVE_FORWARD'
   | 'DRIVE_BACK'
-  | 'CONVEYOR_DUMP'
   | 'DONE'
 
 export type DigSequenceSnapshot = {

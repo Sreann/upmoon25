@@ -1,8 +1,9 @@
 """
 Autonomous dig sequence for lunar `run dig`.
 
-Runs once after IR/bucket calibration, then repeats drive-forward → drive-back →
-dump → bucket bump until the cycle counter exceeds max_cycles (see params).
+Runs once after IR/bucket calibration, then executes exactly three simple
+drive-forward → drive-back cycles by default. The bucket position bumps between
+cycles. Conveyor output is explicitly held off for this profile.
 
 When ``use_local_terrain_grid`` is true (default), drive phases consult the same
 ``/autonomy/local_terrain_grid`` OccupancyGrid as short-segment nav (forward / rear
@@ -10,9 +11,9 @@ corridor slices + ``plan_corridor_step``). Dig does not turn the robot; it only
 holds ``cmd/velocity`` when the map says the commanded direction is unsafe.
 
 If IR reaches the target first during setup, the linear bucket pose still stops stepping, but the
-dig belt (``cmd/bucket_vel`` / bucket chain) **stays commanded** through forward, backward, dump,
-and repeat cycles until the sequence finishes or aborts. If setup exits on the bucket position
-safety cap without IR, the same belt behavior applies.
+dig belt (``cmd/bucket_vel`` / bucket chain) **stays commanded** through the three forward/back
+cycles until the sequence finishes or aborts. If setup exits on the bucket position safety cap
+without IR, the same belt behavior applies.
 
 By default ``ir_setup_mode`` is ``le``: IR is expected to **decrease** toward ``ir_target``
 (e.g. from ~70 while high to 17 at depth). The setup phase stops when IR is **less than or equal
@@ -24,19 +25,13 @@ each successive ``cmd/bucket_pos`` step: after a step, publishing the next incre
 drops by at least that amount vs. the reading **before** the step, or ``ir_bucket_gate_timeout_sec``
 elapses.
 
-The conveyor (``cmd/conveyor``) is commanded **only** during each dump timer window and is
-explicitly zeroed outside ``CONVEYOR_DUMP`` so it restarts cleanly every cycle.
-
-The post-dump bucket position bump uses the same optional IR gate as setup (unless
-``ir_bucket_gate_min_ir_drop`` is ``0``). When that gate is active, ``phase_clock`` is reset so
-``phase_timeout_sec`` applies to the gate wait separately from the conveyor dump window.
-
 Set ``timed_drive_ms`` > 0 to run forward and backward drive legs for the same duration (ms)
 without wheel encoders. Otherwise forward stops at ``calibrated_rotary`` ticks and backward
 when the encoder reads ~zero.
 
 Prerequisite: frontend stack publishing /sensor/ir and
 subscribed to cmd/velocity, cmd/bucket_pos, cmd/bucket_vel, cmd/conveyor.
+``cmd/conveyor`` is only published as ``0`` by this node.
 Encoder topics are only needed when ``timed_drive_ms`` is 0.
 For terrain gating, run ``local_terrain_grid`` (e.g. ``lunar run nav``) so the grid topic exists.
 """
@@ -75,8 +70,7 @@ class DigState(Enum):
     SETUP_IR = 1
     DRIVE_FORWARD = 2
     DRIVE_BACK = 3
-    CONVEYOR_DUMP = 4
-    DONE = 5
+    DONE = 4
 
 
 class DigSequenceController(Node):
@@ -95,7 +89,7 @@ class DigSequenceController(Node):
         self.declare_parameter("bucket_start_pos", 20)
         self.declare_parameter("bucket_safety_stop", 34)
         self.declare_parameter("bucket_chain_speed", 40)
-        self.declare_parameter("max_cycles_le", 5)
+        self.declare_parameter("max_cycles_le", 3)
         self.declare_parameter("forward_linear", 35.0)
         self.declare_parameter("backward_linear", -35.0)
         self.declare_parameter("control_dt", 0.05)
@@ -104,7 +98,7 @@ class DigSequenceController(Node):
         # before the step) before allowing the next increment. 0 disables the gate.
         self.declare_parameter("ir_bucket_gate_min_ir_drop", 2)
         self.declare_parameter("ir_bucket_gate_timeout_sec", 25.0)
-        self.declare_parameter("conveyor_seconds", 5.0)
+        self.declare_parameter("conveyor_seconds", 0.0)
         self.declare_parameter("phase_timeout_sec", 180.0)
         self.declare_parameter("wait_for_nav_dig_arm", False)
         # Same local traversability map as short-segment nav (`local_terrain_grid` → OccupancyGrid).
@@ -146,7 +140,7 @@ class DigSequenceController(Node):
         self.ir_bucket_step_every_sec = float(self.get_parameter("ir_bucket_step_every_sec").value)
         self.ir_bucket_gate_min_drop = max(0, int(self.get_parameter("ir_bucket_gate_min_ir_drop").value))
         self.ir_bucket_gate_timeout_sec = float(self.get_parameter("ir_bucket_gate_timeout_sec").value)
-        self.conveyor_seconds = float(self.get_parameter("conveyor_seconds").value)
+        self.conveyor_seconds = 0.0
         self.phase_timeout_sec = float(self.get_parameter("phase_timeout_sec").value)
         self._use_local_terrain_grid = bool(self.get_parameter("use_local_terrain_grid").value)
         self._grid_topic = str(self.get_parameter("grid_topic").value).strip() or "/autonomy/local_terrain_grid"
@@ -193,7 +187,7 @@ class DigSequenceController(Node):
         self.phase_clock = self.get_clock().now()
         self.ir_last_step_time = self.get_clock().now()
         self.conveyor_until = None
-        self._conveyor_end_applied = False
+        self._conveyor_end_applied = True
 
         self.bucket_pos_commanded = self.bucket_start_pos
         self.cycle_counter = 0
@@ -204,7 +198,7 @@ class DigSequenceController(Node):
         self._ir_bucket_gate_t0 = 0.0
         # True while dig_sequence commands the belt through the mission (telemetry / dashboard hint).
         self.keep_bucket_chain_until_done = False
-        # After dump conveyor stops, optionally wait for IR gate before bumping bucket_pos (+1).
+        # Legacy telemetry key remains false; this simplified profile has no dump/conveyor leg.
         self._post_dump_bump_pending = False
 
         self.timer = self.create_timer(self.control_dt, self._tick)
@@ -222,7 +216,7 @@ class DigSequenceController(Node):
         self.get_logger().info(
             f"dig_sequence start (state={self.state.name}): IRMode={self.ir_setup_mode}, IR→{self.ir_target}, "
             f"bucket {self.bucket_start_pos}..{self.bucket_safety_stop}, "
-            f"{fwd_desc}, repeat while counter<={self.max_cycles_le}, {ginfo}, {gate_msg}"
+            f"{fwd_desc}, cycles={self.max_cycles_le}, conveyor=disabled, {ginfo}, {gate_msg}"
         )
 
     def _grid_cb(self, msg: OccupancyGrid) -> None:
@@ -321,8 +315,6 @@ class DigSequenceController(Node):
 
     def _publish_dig_state(self) -> None:
         conv_rem: float | None = None
-        if self.conveyor_until is not None and self.state == DigState.CONVEYOR_DUMP:
-            conv_rem = max(0.0, (self.conveyor_until - self.get_clock().now()).nanoseconds / 1e9)
         fwd_ok, fwd_r = self._terrain_gate_forward()
         rev_ok, rev_r = self._terrain_gate_reverse()
         payload = {
@@ -366,20 +358,8 @@ class DigSequenceController(Node):
         self.pub_dig_state.publish(m)
 
     def _sync_conveyor_output(self) -> None:
-        """``cmd/conveyor`` is 1 only during each dump window; 0 in all other phases (re-stops every cycle)."""
-        if self.state != DigState.CONVEYOR_DUMP:
-            self.pub_conveyor.publish(Int16(data=0))
-            return
-        if self._post_dump_bump_pending or self._conveyor_end_applied:
-            self.pub_conveyor.publish(Int16(data=0))
-            return
-        if self.conveyor_until is None:
-            return
-        now = self.get_clock().now()
-        if now < self.conveyor_until:
-            self.pub_conveyor.publish(Int16(data=1))
-        else:
-            self.pub_conveyor.publish(Int16(data=0))
+        """This simplified dig profile never activates the conveyor."""
+        self.pub_conveyor.publish(Int16(data=0))
 
     def _apply_post_cycle_bump_and_maybe_repeat(self) -> None:
         self.bucket_pos_commanded += 1
@@ -391,14 +371,14 @@ class DigSequenceController(Node):
         self._post_dump_bump_pending = False
         self._ir_bucket_gate_waiting = False
 
-        if self.cycle_counter <= self.max_cycles_le:
+        if self.cycle_counter < self.max_cycles_le:
             self.get_logger().info("Repeating drive-forward phase.")
             self.state = DigState.DRIVE_FORWARD
             self.conveyor_until = None
-            self._conveyor_end_applied = False
+            self._conveyor_end_applied = True
             self._reset_phase_clock()
         else:
-            self.get_logger().info("Counter exceeded limit; terminating loop.")
+            self.get_logger().info("Three-cycle dig profile complete; terminating loop.")
             self.keep_bucket_chain_until_done = False
             self._post_dump_bump_pending = False
             self._stop_motion()
@@ -445,8 +425,6 @@ class DigSequenceController(Node):
                 self._tick_drive_forward()
             elif self.state == DigState.DRIVE_BACK:
                 self._tick_drive_back()
-            elif self.state == DigState.CONVEYOR_DUMP:
-                self._tick_conveyor()
 
             self._sync_conveyor_output()
 
@@ -580,18 +558,12 @@ class DigSequenceController(Node):
             if timed_leg_complete(self._phase_elapsed(), self.timed_drive_ms):
                 self.get_logger().info(f"Backward phase finished after {self.timed_drive_ms} ms (timed).")
                 self._stop_motion()
-                self.state = DigState.CONVEYOR_DUMP
-                self._reset_phase_clock()
-                self._conveyor_end_applied = False
-                self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
+                self._apply_post_cycle_bump_and_maybe_repeat()
                 return
         elif encoder_returned_home(self.encoder_value, self.encoder_tolerance):
             self.get_logger().info("Encoder returned to ~0.")
             self._stop_motion()
-            self.state = DigState.CONVEYOR_DUMP
-            self._reset_phase_clock()
-            self._conveyor_end_applied = False
-            self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
+            self._apply_post_cycle_bump_and_maybe_repeat()
             return
         allow, detail = self._terrain_gate_reverse()
         if not allow:
@@ -599,50 +571,6 @@ class DigSequenceController(Node):
             self._stop_motion()
             return
         self._publish_vel(self.backward_linear)
-
-    def _tick_conveyor(self) -> None:
-        if self._post_dump_bump_pending:
-            if self.ir_bucket_gate_min_drop <= 0:
-                self._ir_bucket_gate_waiting = False
-                self._apply_post_cycle_bump_and_maybe_repeat()
-                return
-            elapsed_gate = time.monotonic() - self._ir_bucket_gate_t0
-            if not ir_bucket_step_gate_released(
-                self.ir_value,
-                self._ir_anchor_before_last_bucket_step,
-                self.ir_bucket_gate_min_drop,
-                elapsed_sec=elapsed_gate,
-                timeout_sec=self.ir_bucket_gate_timeout_sec,
-            ):
-                return
-            self._ir_bucket_gate_waiting = False
-            self._apply_post_cycle_bump_and_maybe_repeat()
-            return
-
-        if self.conveyor_until is None:
-            self.conveyor_until = self.get_clock().now() + rclpy.duration.Duration(seconds=self.conveyor_seconds)
-
-        now = self.get_clock().now()
-        if now < self.conveyor_until:
-            return
-        if self._conveyor_end_applied:
-            return
-
-        self._conveyor_end_applied = True
-        if self.ir_bucket_gate_min_drop > 0:
-            self._post_dump_bump_pending = True
-            self._ir_bucket_gate_waiting = True
-            self._ir_anchor_before_last_bucket_step = int(self.ir_value)
-            self._ir_bucket_gate_t0 = time.monotonic()
-            self._reset_phase_clock()
-            self.get_logger().info(
-                "Dump timer elapsed; conveyor off — gating post-dump bucket bump on IR "
-                f"(phase_timeout budget restarted, {self.phase_timeout_sec} s)."
-            )
-            return
-
-        self._apply_post_cycle_bump_and_maybe_repeat()
-
 
 def main(args=None):
     rclpy.init(args=args)
