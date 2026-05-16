@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CameraStream, StreamStatus } from '../bridge/types'
 
 const RECONNECT_MS = 500
@@ -9,7 +9,8 @@ const cameraSocketNames: Record<CameraStream['id'], string> = {
 }
 
 export function useCameraFrame(camera: CameraStream, wsBase: string | undefined) {
-  const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  const [hasFrame, setHasFrame] = useState(false)
   const [socketState, setSocketState] = useState<StreamStatus>('unknown')
 
   useEffect(() => {
@@ -29,6 +30,14 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       }
     }
 
+    function clearImage() {
+      if (imageRef.current) {
+        imageRef.current.removeAttribute('src')
+      }
+      revokeCurrent()
+      setHasFrame(false)
+    }
+
     function connect() {
       if (closed) return
       setSocketState((prev) => (prev === 'live' ? prev : 'connecting'))
@@ -41,8 +50,11 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
         const buf = event.data as ArrayBuffer
         const blob = new Blob([buf], { type: 'image/jpeg' })
         const nextUrl = URL.createObjectURL(blob)
-        setFrameUrl(nextUrl)
+        if (imageRef.current) {
+          imageRef.current.src = nextUrl
+        }
         setSocketState('live')
+        setHasFrame((prev) => (prev ? prev : true))
         if (currentUrl) URL.revokeObjectURL(currentUrl)
         currentUrl = nextUrl
       }
@@ -54,8 +66,7 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       socket.onclose = () => {
         if (closed) return
         setSocketState('missing')
-        setFrameUrl(null)
-        revokeCurrent()
+        clearImage()
         reconnectTimer = window.setTimeout(connect, RECONNECT_MS)
       }
     }
@@ -66,13 +77,12 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       closed = true
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
       socket?.close()
-      revokeCurrent()
-      setFrameUrl(null)
+      clearImage()
     }
   }, [camera.id, wsBase])
 
-  const effectiveFrameUrl = wsBase ? frameUrl : null
+  const effectiveHasFrame = wsBase ? hasFrame : false
   const effectiveSocketState: StreamStatus = wsBase ? socketState : 'unknown'
 
-  return { frameUrl: effectiveFrameUrl, socketState: effectiveSocketState, configured: Boolean(wsBase) }
+  return { imageRef, hasFrame: effectiveHasFrame, socketState: effectiveSocketState, configured: Boolean(wsBase) }
 }

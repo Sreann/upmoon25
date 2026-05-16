@@ -343,10 +343,10 @@ function SafetyBar({
 }
 
 function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string | undefined }) {
-  const { frameUrl, socketState, configured } = useCameraFrame(camera, wsBase)
+  const { imageRef, hasFrame, socketState, configured } = useCameraFrame(camera, wsBase)
   const tryWs = Boolean(configured)
   const displayStatus = tryWs ? socketState : camera.status
-  const activeFrameUrl = tryWs && socketState === 'live' ? frameUrl : null
+  const activeFrame = tryWs && socketState === 'live' && hasFrame
   const statusText = {
     live: 'live',
     connecting: 'connecting',
@@ -355,7 +355,7 @@ function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string |
     unknown: 'unknown',
   }[displayStatus]
   const detail = {
-    live: activeFrameUrl ? 'Receiving JPEG frames from camera_ws (Tornado)' : 'WebSocket open; waiting for first JPEG',
+    live: activeFrame ? 'Receiving JPEG frames from camera_ws (Tornado)' : 'WebSocket open; waiting for first JPEG',
     connecting: 'Connecting to camera WebSocket (auto-retry every 500 ms)',
     stale: 'WebSocket error; retrying',
     missing: configured ? 'Camera WebSocket closed or unreachable; retrying' : 'Could not resolve WebSocket base URL for this page',
@@ -366,22 +366,25 @@ function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string |
   return (
     <div className="overflow-hidden rounded-md border border-slate-800 bg-slate-900">
       <div className="relative aspect-video bg-[radial-gradient(circle_at_40%_35%,#334155,#0f172a_42%,#020617)]">
-        {activeFrameUrl ? (
-          <img className="h-full w-full object-cover" src={activeFrameUrl} alt={`${camera.name} live camera feed`} />
-        ) : displayStatus === 'live' ? (
+        <img
+          ref={imageRef}
+          className={clsx('h-full w-full object-cover', activeFrame ? 'opacity-100' : 'opacity-0')}
+          alt={`${camera.name} live camera feed`}
+        />
+        {!activeFrame && displayStatus === 'live' ? (
           <>
             <div className={clsx('absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full border-2', accent)} />
             <div className="absolute bottom-4 left-4 right-4 h-px bg-white/30" />
             <div className="absolute bottom-4 left-1/2 top-4 w-px bg-white/30" />
           </>
-        ) : (
+        ) : !activeFrame ? (
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="max-w-xs rounded-md border border-slate-700 bg-black/60 p-4 text-center">
               <div className="text-sm font-semibold text-white">{statusText}</div>
               <div className="mt-1 text-xs text-slate-300">{detail}</div>
             </div>
           </div>
-        )}
+        ) : null}
         <div className={clsx('absolute left-4 top-4 rounded border px-2 py-1 text-xs', statusClass(streamToStatus(displayStatus)))}>{statusText}</div>
       </div>
       <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs text-slate-300">
