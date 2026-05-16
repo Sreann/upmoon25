@@ -22,6 +22,8 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | undefined
     let currentUrl: string | null = null
+    let live = false
+    let hasAnyFrame = false
 
     function revokeCurrent() {
       if (currentUrl) {
@@ -35,6 +37,9 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
         imageRef.current.removeAttribute('src')
       }
       revokeCurrent()
+      live = false
+      hasAnyFrame = false
+      setSocketState('missing')
       setHasFrame(false)
     }
 
@@ -44,8 +49,14 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
         return
       }
       if (imageRef.current) imageRef.current.src = nextUrl
-      setSocketState('live')
-      setHasFrame((prev) => (prev ? prev : true))
+      if (!live) {
+        live = true
+        setSocketState('live')
+      }
+      if (!hasAnyFrame) {
+        hasAnyFrame = true
+        setHasFrame(true)
+      }
       revokeCurrent()
       currentUrl = nextUrl
     }

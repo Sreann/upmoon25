@@ -28,8 +28,10 @@ CAMERA_WS_PORT = 8767
 # Outbound JPEG cap (per camera). 0 means every received JPEG is forwarded.
 _DEFAULT_CAMERA_PUSH_HZ = 0.0
 _DEFAULT_SENSOR_PUSH_HZ = 20.0
+_DEFAULT_CAMERA_WRITE_QUEUE_FRAMES = 32
 _camera_push_interval_sec = 0.0 if _DEFAULT_CAMERA_PUSH_HZ <= 0.0 else 1.0 / _DEFAULT_CAMERA_PUSH_HZ
 _sensor_push_interval_sec = 1.0 / _DEFAULT_SENSOR_PUSH_HZ
+_camera_write_queue_frames = _DEFAULT_CAMERA_WRITE_QUEUE_FRAMES
 
 _clients_lock = threading.Lock()
 _clients = {"rgb": set(), "rear": set()}
@@ -110,7 +112,7 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
     def open(self, camera_name):
         self.camera_name = camera_name or "rgb"
         self._camera_write_pending = False
-        self._camera_queued_payload = None
+        self._camera_queued_payloads = deque(maxlen=_camera_write_queue_frames)
         if self.camera_name not in _clients:
             self.close(code=1008, reason="unknown camera")
             return
@@ -132,7 +134,7 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
         if not payload or self.ws_connection is None:
             return
         if self._camera_write_pending:
-            self._camera_queued_payload = payload
+            self._camera_queued_payloads.append(payload)
             return
         self._camera_write_pending = True
         try:
@@ -149,8 +151,7 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
         except Exception:
             self.close()
             return
-        payload = self._camera_queued_payload
-        self._camera_queued_payload = None
+        payload = self._camera_queued_payloads.popleft() if self._camera_queued_payloads else None
         if payload and self.ws_connection is not None:
             self.send_camera_payload(payload)
 
@@ -233,9 +234,9 @@ def _schedule_sensor_broadcast():
     _io_loop.add_callback(_broadcast_sensors, payload)
 
 
-def _configure_push_rates(*, max_camera_push_hz: float, max_sensor_push_hz: float) -> None:
+def _configure_push_rates(*, max_camera_push_hz: float, max_sensor_push_hz: float, camera_write_queue_frames: int) -> None:
     """Set module-level intervals from ROS parameters (``CameraWsBridge``)."""
-    global _camera_push_interval_sec, _sensor_push_interval_sec
+    global _camera_push_interval_sec, _sensor_push_interval_sec, _camera_write_queue_frames
     cam = float(max_camera_push_hz)
     if cam <= 0.0:
         _camera_push_interval_sec = 0.0
@@ -248,6 +249,7 @@ def _configure_push_rates(*, max_camera_push_hz: float, max_sensor_push_hz: floa
     else:
         sens = max(1.0, min(sens, 50.0))
         _sensor_push_interval_sec = 1.0 / sens
+    _camera_write_queue_frames = max(1, min(int(camera_write_queue_frames), 240))
 
 
 class CameraWsBridge(Node):
@@ -256,19 +258,22 @@ class CameraWsBridge(Node):
 
         self.declare_parameter("max_camera_push_hz", _DEFAULT_CAMERA_PUSH_HZ)
         self.declare_parameter("max_sensor_push_hz", _DEFAULT_SENSOR_PUSH_HZ)
+        self.declare_parameter("camera_write_queue_frames", _DEFAULT_CAMERA_WRITE_QUEUE_FRAMES)
         _configure_push_rates(
             max_camera_push_hz=float(self.get_parameter("max_camera_push_hz").value),
             max_sensor_push_hz=float(self.get_parameter("max_sensor_push_hz").value),
+            camera_write_queue_frames=int(self.get_parameter("camera_write_queue_frames").value),
         )
         cam_label = "unlimited" if _camera_push_interval_sec <= 0.0 else f"{round(1.0 / _camera_push_interval_sec, 2)} Hz"
         sens_label = "unlimited" if _sensor_push_interval_sec <= 0.0 else f"{round(1.0 / _sensor_push_interval_sec, 2)} Hz"
         self.get_logger().info(
             f"camera_ws push limits: JPEG {cam_label} per camera, /sensor/ws {sens_label} "
+            f"write_queue={_camera_write_queue_frames} frames "
             f"(set max_camera_push_hz / max_sensor_push_hz; 0 = no cap)"
         )
 
         sensor_qos = QoSProfile(
-            depth=3,
+            depth=30,
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,

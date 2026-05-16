@@ -2420,6 +2420,9 @@ def _camera_ws_command(root: Path) -> str:
     sens_hz = os.environ.get("LUNAR_MAX_SENSOR_PUSH_HZ", "").strip()
     if sens_hz:
         ros_arg_parts.append(f"-p max_sensor_push_hz:={shlex.quote(sens_hz)}")
+    queue_frames = os.environ.get("LUNAR_CAMERA_WRITE_QUEUE_FRAMES", "").strip()
+    if queue_frames:
+        ros_arg_parts.append(f"-p camera_write_queue_frames:={shlex.quote(queue_frames)}")
     if ros_arg_parts:
         cmd += " --ros-args " + " ".join(ros_arg_parts)
     return cmd
