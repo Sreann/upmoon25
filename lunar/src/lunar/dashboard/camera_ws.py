@@ -19,14 +19,14 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CompressedImage
 from rcl_interfaces.msg import Log
-from std_msgs.msg import Float32, Int16, Int32
+from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray
 from geometry_msgs.msg import Twist
 
+from lunar.keyboard_topics import BUCKET_POS_MAX, BUCKET_POS_MIN, KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
 
 CAMERA_WS_PORT = 8767
-# Outbound JPEG cap (per camera). ROS may publish faster; we coalesce to protect the Jetson
-# and browser. Increase via ROS param ``max_camera_push_hz`` (see ``CameraWsBridge``).
-_DEFAULT_CAMERA_PUSH_HZ = 30.0
+# Outbound JPEG cap (per camera). 0 means every received JPEG is forwarded.
+_DEFAULT_CAMERA_PUSH_HZ = 0.0
 _DEFAULT_SENSOR_PUSH_HZ = 20.0
 _camera_push_interval_sec = 1.0 / _DEFAULT_CAMERA_PUSH_HZ
 _sensor_push_interval_sec = 1.0 / _DEFAULT_SENSOR_PUSH_HZ
@@ -60,6 +60,20 @@ _sensor_state = {
     "ir_right": 0,
     "encoder_left": 0,
     "encoder_right": 0,
+    "encoder_pin_right": None,
+    "encoder_pin_left": None,
+    "encoder_dec_right": None,
+    "encoder_dec_left": None,
+    "encoder_bad_right": None,
+    "encoder_bad_left": None,
+    "drive_linear": 0.0,
+    "drive_angular": 0.0,
+    "camera_height": None,
+    "pan_angle": 90,
+    "bucket_pos": None,
+    "bucket_pos_max": BUCKET_POS_MAX,
+    "bucket_vel": None,
+    "conveyor": None,
     "recent_logs": [],
 }
 
@@ -274,6 +288,12 @@ class CameraWsBridge(Node):
         self.create_subscription(Int16, "/sensor/ir/right", self.ir_right_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/left", self.encoder_left_cb, 10)
         self.create_subscription(Int32, "/sensor/encoder/right", self.encoder_right_cb, 10)
+        self.create_subscription(Int32MultiArray, KEYBOARD_SENSOR_TOPICS["encoder_telemetry"], self.encoder_telemetry_cb, 10)
+        self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["camera-height"], self.camera_height_cmd_cb, 10)
+        self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["pan"], self.pan_cmd_cb, 10)
+        self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-pos"], self.bucket_pos_cmd_cb, 10)
+        self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-vel"], self.bucket_vel_cmd_cb, 10)
+        self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["conveyor"], self.conveyor_cmd_cb, 10)
         self.create_subscription(Log, "/rosout", self.log_cb, 10)
         self.create_timer(1.0, self.system_tick)
         self.get_logger().info("Camera websocket bridge initialized")
@@ -292,6 +312,8 @@ class CameraWsBridge(Node):
     def cmd_vel_cb(self, msg):
         with _clients_lock:
             _sensor_state["baseline_vel"] = float(msg.linear.x)
+            _sensor_state["drive_linear"] = float(msg.linear.x)
+            _sensor_state["drive_angular"] = float(msg.angular.z)
         _schedule_sensor_broadcast()
 
     def battery_cb(self, msg):
@@ -317,6 +339,45 @@ class CameraWsBridge(Node):
     def encoder_right_cb(self, msg):
         with _clients_lock:
             _sensor_state["encoder_right"] = int(msg.data)
+        _schedule_sensor_broadcast()
+
+    def encoder_telemetry_cb(self, msg):
+        data = [int(v) for v in msg.data]
+        if len(data) < 6:
+            return
+        with _clients_lock:
+            _sensor_state["encoder_pin_right"] = data[0]
+            _sensor_state["encoder_pin_left"] = data[1]
+            _sensor_state["encoder_dec_right"] = data[2]
+            _sensor_state["encoder_dec_left"] = data[3]
+            _sensor_state["encoder_bad_right"] = data[4]
+            _sensor_state["encoder_bad_left"] = data[5]
+        _schedule_sensor_broadcast()
+
+    def camera_height_cmd_cb(self, msg):
+        with _clients_lock:
+            _sensor_state["camera_height"] = int(msg.data)
+        _schedule_sensor_broadcast()
+
+    def pan_cmd_cb(self, msg):
+        with _clients_lock:
+            _sensor_state["pan_angle"] = int(msg.data)
+        _schedule_sensor_broadcast()
+
+    def bucket_pos_cmd_cb(self, msg):
+        with _clients_lock:
+            _sensor_state["bucket_pos"] = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, int(msg.data)))
+            _sensor_state["bucket_pos_max"] = BUCKET_POS_MAX
+        _schedule_sensor_broadcast()
+
+    def bucket_vel_cmd_cb(self, msg):
+        with _clients_lock:
+            _sensor_state["bucket_vel"] = int(msg.data)
+        _schedule_sensor_broadcast()
+
+    def conveyor_cmd_cb(self, msg):
+        with _clients_lock:
+            _sensor_state["conveyor"] = int(msg.data)
         _schedule_sensor_broadcast()
 
     def log_cb(self, msg):

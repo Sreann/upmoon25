@@ -64,6 +64,7 @@ from backend.navigation_controller_pure import plan_corridor_step
 
 FIXED_DIG_CYCLES = 3
 PHASE_DELAY_SEC = 5.0
+DIG_BUCKET_POS_MAX = 35
 
 
 class DigState(Enum):
@@ -92,7 +93,7 @@ class DigSequenceController(Node):
         self.declare_parameter("ir_setup_mode", "le")
         self.declare_parameter("ir_target", 17)
         self.declare_parameter("bucket_start_pos", 20)
-        self.declare_parameter("bucket_safety_stop", 34)
+        self.declare_parameter("bucket_safety_stop", DIG_BUCKET_POS_MAX)
         self.declare_parameter("bucket_chain_speed", 40)
         self.declare_parameter("max_cycles_le", FIXED_DIG_CYCLES)
         self.declare_parameter("forward_linear", 35.0)
@@ -136,7 +137,12 @@ class DigSequenceController(Node):
             _irm = "le"
         self.ir_setup_mode = _irm
         self.bucket_start_pos = int(self.get_parameter("bucket_start_pos").value)
-        self.bucket_safety_stop = int(self.get_parameter("bucket_safety_stop").value)
+        raw_bucket_safety_stop = int(self.get_parameter("bucket_safety_stop").value)
+        self.bucket_safety_stop = min(DIG_BUCKET_POS_MAX, raw_bucket_safety_stop)
+        if raw_bucket_safety_stop > DIG_BUCKET_POS_MAX:
+            self.get_logger().warn(
+                f"Ignoring bucket_safety_stop:={raw_bucket_safety_stop}; dig bucket position is capped at {DIG_BUCKET_POS_MAX}%."
+            )
         self.bucket_chain_speed = int(self.get_parameter("bucket_chain_speed").value)
         raw_max_cycles = int(self.get_parameter("max_cycles_le").value)
         self.max_cycles_le = FIXED_DIG_CYCLES
@@ -385,7 +391,7 @@ class DigSequenceController(Node):
             self.pub_bucket_vel.publish(Int16(data=0))
 
     def _apply_post_cycle_bump_and_maybe_repeat(self) -> None:
-        self.bucket_pos_commanded += 1
+        self.bucket_pos_commanded = min(DIG_BUCKET_POS_MAX, self.bucket_pos_commanded + 1)
         self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
         self.cycle_counter += 1
         self.get_logger().info(
@@ -469,7 +475,7 @@ class DigSequenceController(Node):
     def _tick_setup_ir(self) -> None:
         if not self.setup_complete:
             self._reset_phase_clock()
-            self.bucket_pos_commanded = self.bucket_start_pos
+            self.bucket_pos_commanded = min(DIG_BUCKET_POS_MAX, self.bucket_start_pos)
             self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
             self.setup_complete = True
@@ -545,7 +551,7 @@ class DigSequenceController(Node):
             self._ir_bucket_gate_waiting = False
 
         ir_before = int(self.ir_value)
-        self.bucket_pos_commanded += 1
+        self.bucket_pos_commanded = min(DIG_BUCKET_POS_MAX, self.bucket_pos_commanded + 1)
         self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
         self.ir_last_step_time = self.get_clock().now()
 

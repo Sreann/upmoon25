@@ -22,8 +22,6 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | undefined
     let currentUrl: string | null = null
-    let pendingUrl: string | null = null
-    let frameRequest: number | undefined
 
     function revokeCurrent() {
       if (currentUrl) {
@@ -32,34 +30,20 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       }
     }
 
-    function revokePending() {
-      if (pendingUrl) {
-        URL.revokeObjectURL(pendingUrl)
-        pendingUrl = null
-      }
-    }
-
     function clearImage() {
       if (imageRef.current) {
         imageRef.current.removeAttribute('src')
       }
-      if (frameRequest !== undefined) {
-        window.cancelAnimationFrame(frameRequest)
-        frameRequest = undefined
-      }
-      revokePending()
       revokeCurrent()
       setHasFrame(false)
     }
 
-    function publishLatestFrame() {
-      frameRequest = undefined
-      if (closed || !pendingUrl) return
-      const nextUrl = pendingUrl
-      pendingUrl = null
-      if (imageRef.current) {
-        imageRef.current.src = nextUrl
+    function publishFrame(nextUrl: string) {
+      if (closed) {
+        URL.revokeObjectURL(nextUrl)
+        return
       }
+      if (imageRef.current) imageRef.current.src = nextUrl
       setSocketState('live')
       setHasFrame((prev) => (prev ? prev : true))
       revokeCurrent()
@@ -78,14 +62,7 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
         const blob = event.data instanceof Blob
           ? event.data
           : new Blob([event.data as ArrayBuffer], { type: 'image/jpeg' })
-        const nextUrl = URL.createObjectURL(blob)
-        if (pendingUrl) {
-          URL.revokeObjectURL(pendingUrl)
-        }
-        pendingUrl = nextUrl
-        if (frameRequest === undefined) {
-          frameRequest = window.requestAnimationFrame(publishLatestFrame)
-        }
+        publishFrame(URL.createObjectURL(blob))
       }
 
       socket.onerror = () => {

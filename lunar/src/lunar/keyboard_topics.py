@@ -10,6 +10,8 @@ from __future__ import annotations
 
 PAN_ANGLE_MIN = 0
 PAN_ANGLE_MAX = 180
+BUCKET_POS_MIN = 0
+BUCKET_POS_MAX = 35
 
 
 def clamp_pan_angle(value: int | float) -> int:

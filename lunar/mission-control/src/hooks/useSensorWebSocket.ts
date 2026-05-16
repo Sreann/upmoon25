@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { LogLine, Metric, MissionControlSnapshot, SensorSnapshot, TrendPoint } from '../bridge/types'
+import type { ActuatorSnapshot, LogLine, Metric, MissionControlSnapshot, SensorSnapshot, TrendPoint } from '../bridge/types'
 import { parseSensorWsPayload, type ParsedSensorMessage } from './sensorWsParse'
 
 const RECONNECT_MS = 500
@@ -18,6 +18,7 @@ function mergeLogs(snapshotLogs: LogLine[], recent: string[]): LogLine[] {
 export type SensorWsOverlay = {
   trends: TrendPoint[] | null
   sensors: SensorSnapshot
+  actuators: Partial<ActuatorSnapshot>
   metrics: Metric[]
   logs: LogLine[]
   connected: boolean
@@ -109,6 +110,7 @@ export function useSensorWebSocket(
   return {
     trends: parsed.trends,
     sensors: parsed.sensors,
+    actuators: parsed.actuators,
     metrics: parsed.patchMetrics(snapshot.metrics),
     logs: mergeLogs(snapshot.logs, parsed.recentLogs),
     connected,

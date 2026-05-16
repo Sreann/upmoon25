@@ -6,7 +6,13 @@ from typing import Optional
 
 import serial.tools.list_ports
 
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
+from .keyboard_topics import (
+    BUCKET_POS_MAX,
+    BUCKET_POS_MIN,
+    KEYBOARD_PUBLISHER_TOPICS,
+    KEYBOARD_SENSOR_TOPICS,
+    clamp_pan_angle,
+)
 
 ARDUINO_CAM_HEIGHT_PIN = 9
 ARDUINO_PAN_PIN = 3
@@ -229,7 +235,7 @@ class RobotActuators:
         return self._publish_int("pan", 0)
 
     def set_bucket_pos(self, value: int) -> bool:
-        return self._publish_int("bucket-pos", _clamp(value, 0, 100))
+        return self._publish_int("bucket-pos", _clamp(value, BUCKET_POS_MIN, BUCKET_POS_MAX))
 
     def set_bucket_vel(self, value: int) -> bool:
         return self._publish_int("bucket-vel", int(value))
@@ -575,7 +581,7 @@ def run_keyboard_tui(
                 self.last_result = "bucket position disabled"
                 self._refresh_view()
                 return
-            self.bucket_pos = _clamp(value, 0, 100)
+            self.bucket_pos = _clamp(value, BUCKET_POS_MIN, BUCKET_POS_MAX)
             self._set_result(self.actuator.set_bucket_pos(self.bucket_pos))
 
         def _set_bucket_vel(self, value: int) -> None:

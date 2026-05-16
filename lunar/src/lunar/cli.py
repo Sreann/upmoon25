@@ -20,7 +20,7 @@ import typer
 import serial.tools.list_ports
 
 from .config import Config, CONFIG_PATH, find_repo_root
-from .keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
+from .keyboard_topics import BUCKET_POS_MAX, BUCKET_POS_MIN, KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
 from .process import kill_all, save_state, spawn
 from .run_session import append_process_banner, bag_record_command, create_run_session, write_run_meta
 
@@ -744,7 +744,7 @@ def _run_terminal_subsystem_keyboard(
 
     def set_bucket_pos(value: int):
         nonlocal bucket_pos
-        bucket_pos = max(0, min(100, int(value)))
+        bucket_pos = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, int(value)))
         if direct_ready and arduino is not None and arduino.write(ARDUINO_BUCKET_PIN, bucket_pos):
             return
         publish(pub_bucket_pos, bucket_pos)
@@ -1564,7 +1564,7 @@ def act(
         return
 
     if actuator == Actuator.BUCKET_POS:
-        int_value = max(0, min(100, int(value)))
+        int_value = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, int(value)))
         if _write_arduino_value(ARDUINO_BUCKET_PIN, int_value):
             typer.echo(
                 f"Acting on {actuator.value}: direct-serial value={int_value} -> Arduino pin {ARDUINO_BUCKET_PIN}"

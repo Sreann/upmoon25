@@ -20,7 +20,7 @@ for path in (repo_root, package_root):
     if path_str not in sys.path:
         sys.path.append(path_str)
 
-from lunar.keyboard_topics import PAN_ANGLE_MAX, PAN_ANGLE_MIN  # noqa: E402
+from lunar.keyboard_topics import BUCKET_POS_MAX, BUCKET_POS_MIN, PAN_ANGLE_MAX, PAN_ANGLE_MIN  # noqa: E402
 from lunar.dashboard.state import store  # noqa: E402
 from lunar.dashboard.components.hardware import render_hardware_panel  # noqa: E402
 from lunar.dashboard.components.teleop import render_hold_controls  # noqa: E402
@@ -458,8 +458,8 @@ def _render_command_controls():
             _publish_if_live("publish_conveyor", bool(conveyor_enabled))
         bucket_pos = st.slider(
             "Bucket Pos",
-            0,
-            100,
+            BUCKET_POS_MIN,
+            BUCKET_POS_MAX,
             key="bucket_pos",
             disabled=not ros_live,
         )

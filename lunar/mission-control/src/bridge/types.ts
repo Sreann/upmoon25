@@ -203,13 +203,14 @@ export type SensorSnapshot = {
 }
 
 export type ActuatorSnapshot = {
-  driveLinear: number
-  driveAngular: number
-  cameraHeight: number
-  panAngle: number
-  bucketPos: number
-  bucketVel: number
-  conveyor: number
+  driveLinear?: number
+  driveAngular?: number
+  cameraHeight?: number
+  panAngle?: number
+  bucketPos?: number
+  bucketPosMax?: number
+  bucketVel?: number
+  conveyor?: number
 }
 
 export type PidGains = {

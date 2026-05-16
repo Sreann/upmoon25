@@ -745,6 +745,7 @@ function fmtNum(value: number | null | undefined, digits = 0): string {
 function TeleopTelemetry({ snapshot }: { snapshot: MissionControlSnapshot }) {
   const a = snapshot.actuators
   const s = snapshot.sensors
+  const bucketPos = a?.bucketPos ?? snapshot.mission.digSequence?.bucketPosCommanded
   return (
     <div className="mt-4 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-2 xl:grid-cols-3">
       <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
@@ -764,7 +765,7 @@ function TeleopTelemetry({ snapshot }: { snapshot: MissionControlSnapshot }) {
       <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
         <div className="text-[10px] font-semibold uppercase text-slate-500">Mining</div>
         <div className="mt-1 font-mono text-slate-200">
-          bucket={fmtNum(a?.bucketPos)}% chain={fmtNum(a?.bucketVel)} conv={a?.conveyor ? 'ON' : 'OFF'}
+          bucket={fmtNum(bucketPos)}/{fmtNum(a?.bucketPosMax ?? 35)}% chain={fmtNum(a?.bucketVel)} conv={a?.conveyor ? 'ON' : 'OFF'}
         </div>
         <div className="mt-1 text-slate-500">bucket pos / chain / conveyor</div>
       </div>
@@ -817,10 +818,14 @@ function App() {
     const overlaySensors = Object.fromEntries(
       Object.entries(sensorOverlay.sensors).filter(([, value]) => value != null),
     )
+    const overlayActuators = Object.fromEntries(
+      Object.entries(sensorOverlay.actuators).filter(([, value]) => value != null),
+    )
     return {
       ...snapshot,
       trends: sensorOverlay.trends ?? snapshot.trends,
       sensors: { ...snapshot.sensors, ...overlaySensors },
+      actuators: { ...snapshot.actuators, ...overlayActuators },
       metrics: sensorOverlay.metrics,
       logs: sensorOverlay.logs,
     }

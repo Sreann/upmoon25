@@ -284,6 +284,7 @@ export function createMockSnapshot(scenario: DemoScenario = 'degraded'): Mission
       cameraHeight: offline ? 0 : 45,
       panAngle: offline ? 90 : 96,
       bucketPos: offline ? 0 : degraded ? 12 : 24,
+      bucketPosMax: 35,
       bucketVel: offline ? 0 : 0,
       conveyor: 0,
     },

@@ -1,9 +1,10 @@
-import type { HealthStatus, Metric, SensorSnapshot, TrendPoint } from '../bridge/types'
+import type { ActuatorSnapshot, HealthStatus, Metric, SensorSnapshot, TrendPoint } from '../bridge/types'
 
 export type ParsedSensorMessage = {
   /** Null until history buffers are populated (see camera_ws `system_tick`). */
   trends: TrendPoint[] | null
   sensors: SensorSnapshot
+  actuators: Partial<ActuatorSnapshot>
   recentLogs: string[]
   patchMetrics: (base: Metric[]) => Metric[]
 }
@@ -72,6 +73,23 @@ export function parseSensorWsPayload(raw: string): ParsedSensorMessage | null {
     irRight: asInt(p.ir_right),
     encoderLeft: asInt(p.encoder_left),
     encoderRight: asInt(p.encoder_right),
+    encoderPinRight: asInt(p.encoder_pin_right),
+    encoderPinLeft: asInt(p.encoder_pin_left),
+    encoderDecRight: asInt(p.encoder_dec_right),
+    encoderDecLeft: asInt(p.encoder_dec_left),
+    encoderBadRight: asInt(p.encoder_bad_right),
+    encoderBadLeft: asInt(p.encoder_bad_left),
+  }
+
+  const actuators: Partial<ActuatorSnapshot> = {
+    driveLinear: asNum(p.drive_linear),
+    driveAngular: asNum(p.drive_angular),
+    cameraHeight: asInt(p.camera_height) ?? undefined,
+    panAngle: asInt(p.pan_angle) ?? undefined,
+    bucketPos: asInt(p.bucket_pos) ?? undefined,
+    bucketPosMax: asInt(p.bucket_pos_max) ?? undefined,
+    bucketVel: asInt(p.bucket_vel) ?? undefined,
+    conveyor: asInt(p.conveyor) ?? undefined,
   }
 
   const linearVel = asNum(p.linear_vel)
@@ -121,5 +139,5 @@ export function parseSensorWsPayload(raw: string): ParsedSensorMessage | null {
     })
   }
 
-  return { trends: trends && trends.length > 0 ? trends : null, sensors, recentLogs, patchMetrics }
+  return { trends: trends && trends.length > 0 ? trends : null, sensors, actuators, recentLogs, patchMetrics }
 }

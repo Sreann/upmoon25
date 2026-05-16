@@ -17,6 +17,8 @@ import tornado.ioloop
 import tornado.web
 import tornado.websocket
 
+from lunar.keyboard_topics import BUCKET_POS_MAX
+
 MISSION_BRIDGE_PORT = 8770
 SNAPSHOT_HZ = 4.0
 STALE_TOPIC_SEC = 1.0
@@ -440,6 +442,7 @@ def build_snapshot() -> Dict[str, Any]:
             "cameraHeight": _state.camera_height,
             "panAngle": _state.pan_angle,
             "bucketPos": _state.bucket_pos,
+            "bucketPosMax": BUCKET_POS_MAX,
             "bucketVel": _state.bucket_vel,
             "conveyor": _state.conveyor,
         },
@@ -585,7 +588,13 @@ def _run_ros_node() -> None:
     from sensor_msgs.msg import CompressedImage, PointCloud2
     from std_msgs.msg import Bool, Float32, Int16, Int32, Int32MultiArray, String
 
-    from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
+    from lunar.keyboard_topics import (
+        BUCKET_POS_MAX,
+        BUCKET_POS_MIN,
+        KEYBOARD_PUBLISHER_TOPICS,
+        KEYBOARD_SENSOR_TOPICS,
+        clamp_pan_angle,
+    )
 
     class MissionBridgeNode(Node):
         def __init__(self):
@@ -829,9 +838,9 @@ def _run_ros_node() -> None:
                     return
                 if target == "bucket_pos":
                     if action == "increment":
-                        _state.bucket_pos = max(0, min(100, _state.bucket_pos + step))
+                        _state.bucket_pos = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, _state.bucket_pos + step))
                     elif action == "decrement":
-                        _state.bucket_pos = max(0, min(100, _state.bucket_pos - step))
+                        _state.bucket_pos = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, _state.bucket_pos - step))
                     elif action == "stop":
                         pass
                     else:
@@ -1024,7 +1033,7 @@ def _run_ros_node() -> None:
             _schedule_snapshot()
 
         def bucket_pos_cmd_cb(self, msg):
-            _state.bucket_pos = int(msg.data)
+            _state.bucket_pos = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, int(msg.data)))
             _schedule_snapshot()
 
         def bucket_vel_cmd_cb(self, msg):

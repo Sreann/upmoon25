@@ -25,7 +25,7 @@ from sensor_msgs.msg import CompressedImage, Image, PointCloud2
 from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray, String
 
 from lunar.dashboard.state import store
-from lunar.keyboard_topics import clamp_pan_angle
+from lunar.keyboard_topics import BUCKET_POS_MAX, BUCKET_POS_MIN, clamp_pan_angle
 
 HOLD_TIMEOUT_SEC = 0.25
 WATCHDOG_PERIOD_SEC = 0.05
@@ -575,6 +575,7 @@ class DashboardBridge(Node):
         store.update(camera_height=value)
 
     def publish_bucket_pos(self, value: int):
+        value = max(BUCKET_POS_MIN, min(BUCKET_POS_MAX, int(value)))
         self.pub_bucket.publish(Int16(data=value))
         store.update(bucket_pos=value)
 
