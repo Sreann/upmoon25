@@ -62,6 +62,8 @@ from backend.dig_sequence_params import (
 )
 from backend.navigation_controller_pure import plan_corridor_step
 
+FIXED_DIG_CYCLES = 3
+
 
 class DigState(Enum):
     """When ``wait_for_nav_dig_arm`` is true, sequence begins in ``WAIT_NAV_ARM`` until ``/autonomy/dig_arm`` is true."""
@@ -89,7 +91,7 @@ class DigSequenceController(Node):
         self.declare_parameter("bucket_start_pos", 20)
         self.declare_parameter("bucket_safety_stop", 34)
         self.declare_parameter("bucket_chain_speed", 40)
-        self.declare_parameter("max_cycles_le", 3)
+        self.declare_parameter("max_cycles_le", FIXED_DIG_CYCLES)
         self.declare_parameter("forward_linear", 35.0)
         self.declare_parameter("backward_linear", -35.0)
         self.declare_parameter("control_dt", 0.05)
@@ -133,7 +135,12 @@ class DigSequenceController(Node):
         self.bucket_start_pos = int(self.get_parameter("bucket_start_pos").value)
         self.bucket_safety_stop = int(self.get_parameter("bucket_safety_stop").value)
         self.bucket_chain_speed = int(self.get_parameter("bucket_chain_speed").value)
-        self.max_cycles_le = int(self.get_parameter("max_cycles_le").value)
+        raw_max_cycles = int(self.get_parameter("max_cycles_le").value)
+        self.max_cycles_le = FIXED_DIG_CYCLES
+        if raw_max_cycles != FIXED_DIG_CYCLES:
+            self.get_logger().warn(
+                f"Ignoring max_cycles_le:={raw_max_cycles}; simplified dig profile always runs {FIXED_DIG_CYCLES} cycles."
+            )
         self.forward_linear = float(self.get_parameter("forward_linear").value)
         self.backward_linear = float(self.get_parameter("backward_linear").value)
         self.control_dt = float(self.get_parameter("control_dt").value)
@@ -361,6 +368,13 @@ class DigSequenceController(Node):
         """This simplified dig profile never activates the conveyor."""
         self.pub_conveyor.publish(Int16(data=0))
 
+    def _sync_bucket_chain_output(self) -> None:
+        """Keep the bucket chain spinning during active dig phases."""
+        if self.state in (DigState.SETUP_IR, DigState.DRIVE_FORWARD, DigState.DRIVE_BACK):
+            self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
+        else:
+            self.pub_bucket_vel.publish(Int16(data=0))
+
     def _apply_post_cycle_bump_and_maybe_repeat(self) -> None:
         self.bucket_pos_commanded += 1
         self.pub_bucket_pos.publish(Int16(data=int(self.bucket_pos_commanded)))
@@ -371,7 +385,7 @@ class DigSequenceController(Node):
         self._post_dump_bump_pending = False
         self._ir_bucket_gate_waiting = False
 
-        if self.cycle_counter < self.max_cycles_le:
+        if self.cycle_counter < FIXED_DIG_CYCLES:
             self.get_logger().info("Repeating drive-forward phase.")
             self.state = DigState.DRIVE_FORWARD
             self.conveyor_until = None
@@ -427,12 +441,7 @@ class DigSequenceController(Node):
                 self._tick_drive_back()
 
             self._sync_conveyor_output()
-
-            if self.state not in (
-                DigState.WAIT_NAV_ARM,
-                DigState.DONE,
-            ):
-                self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
+            self._sync_bucket_chain_output()
         finally:
             self._publish_dig_state()
 
