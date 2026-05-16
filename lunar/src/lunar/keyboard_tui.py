@@ -745,10 +745,10 @@ def run_keyboard_tui(
                 event.stop()
 
             handlers = {
-                "w": self.action_drive_forward,
-                "s": self.action_drive_reverse,
-                "a": self.action_drive_left,
-                "d": self.action_drive_right,
+                "w": self.action_drive_reverse,
+                "s": self.action_drive_forward,
+                "a": self.action_drive_right,
+                "d": self.action_drive_left,
                 "u": self.action_height_up,
                 "up": self.action_height_up,
                 "j": self.action_height_down,
@@ -796,16 +796,16 @@ def run_keyboard_tui(
                 handler()
 
         def action_drive_forward(self) -> None:
-            self._set_drive(self.drive_speed, 0.0, "w")
+            self._set_drive(self.drive_speed, 0.0, "s")
 
         def action_drive_reverse(self) -> None:
-            self._set_drive(-self.drive_speed, 0.0, "s")
+            self._set_drive(-self.drive_speed, 0.0, "w")
 
         def action_drive_left(self) -> None:
-            self._set_drive(0.0, self.turn_speed, "a")
+            self._set_drive(0.0, self.turn_speed, "d")
 
         def action_drive_right(self) -> None:
-            self._set_drive(0.0, -self.turn_speed, "d")
+            self._set_drive(0.0, -self.turn_speed, "a")
 
         def action_height_up(self) -> None:
             self._set_height(self.camera_height + self.height_step)

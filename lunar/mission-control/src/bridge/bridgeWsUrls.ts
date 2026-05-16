@@ -45,7 +45,7 @@ export function resolveCameraWsBaseUrl(): string | undefined {
   if (env) return env.replace(/\/$/, '')
   if (typeof window === 'undefined') return undefined
   const params = new URLSearchParams(window.location.search)
-  if (params.get('cameraProxy') === '1') {
+  if (sameOriginBridgeWsEnabled() || params.get('cameraProxy') === '1') {
     return wsOriginFromPage()
   }
   const port = ((import.meta.env.VITE_CAMERA_WS_PORT as string | undefined)?.trim() || '8767').replace(/^:/, '')
