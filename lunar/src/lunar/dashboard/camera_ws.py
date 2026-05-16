@@ -19,7 +19,7 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CompressedImage
 from rcl_interfaces.msg import Log
-from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray
+from std_msgs.msg import Float32, Int16, Int32, Int32MultiArray, String
 from geometry_msgs.msg import Twist
 
 from lunar.keyboard_topics import BUCKET_POS_MAX, BUCKET_POS_MIN, KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS
@@ -28,7 +28,7 @@ CAMERA_WS_PORT = 8767
 # Outbound JPEG cap (per camera). 0 means every received JPEG is forwarded.
 _DEFAULT_CAMERA_PUSH_HZ = 0.0
 _DEFAULT_SENSOR_PUSH_HZ = 20.0
-_camera_push_interval_sec = 1.0 / _DEFAULT_CAMERA_PUSH_HZ
+_camera_push_interval_sec = 0.0 if _DEFAULT_CAMERA_PUSH_HZ <= 0.0 else 1.0 / _DEFAULT_CAMERA_PUSH_HZ
 _sensor_push_interval_sec = 1.0 / _DEFAULT_SENSOR_PUSH_HZ
 
 _clients_lock = threading.Lock()
@@ -72,6 +72,10 @@ _sensor_state = {
     "pan_angle": 90,
     "bucket_pos": None,
     "bucket_pos_max": BUCKET_POS_MAX,
+    "dig_bucket_pos_commanded": None,
+    "dig_cycle_counter": None,
+    "dig_max_cycles": None,
+    "dig_phase": None,
     "bucket_vel": None,
     "conveyor": None,
     "recent_logs": [],
@@ -294,6 +298,7 @@ class CameraWsBridge(Node):
         self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-pos"], self.bucket_pos_cmd_cb, 10)
         self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-vel"], self.bucket_vel_cmd_cb, 10)
         self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["conveyor"], self.conveyor_cmd_cb, 10)
+        self.create_subscription(String, "/autonomy/dig_sequence/state", self.dig_sequence_state_cb, 10)
         self.create_subscription(Log, "/rosout", self.log_cb, 10)
         self.create_timer(1.0, self.system_tick)
         self.get_logger().info("Camera websocket bridge initialized")
@@ -378,6 +383,19 @@ class CameraWsBridge(Node):
     def conveyor_cmd_cb(self, msg):
         with _clients_lock:
             _sensor_state["conveyor"] = int(msg.data)
+        _schedule_sensor_broadcast()
+
+    def dig_sequence_state_cb(self, msg):
+        try:
+            payload = json.loads(msg.data)
+        except Exception:
+            return
+        with _clients_lock:
+            _sensor_state["dig_bucket_pos_commanded"] = payload.get("bucket_pos_commanded")
+            _sensor_state["dig_cycle_counter"] = payload.get("cycle_counter")
+            _sensor_state["dig_max_cycles"] = payload.get("max_cycles_le")
+            _sensor_state["dig_phase"] = payload.get("phase")
+            _sensor_state["bucket_pos_max"] = BUCKET_POS_MAX
         _schedule_sensor_broadcast()
 
     def log_cb(self, msg):

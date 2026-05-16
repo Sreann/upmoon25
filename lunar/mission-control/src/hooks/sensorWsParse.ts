@@ -86,7 +86,7 @@ export function parseSensorWsPayload(raw: string): ParsedSensorMessage | null {
     driveAngular: asNum(p.drive_angular),
     cameraHeight: asInt(p.camera_height) ?? undefined,
     panAngle: asInt(p.pan_angle) ?? undefined,
-    bucketPos: asInt(p.bucket_pos) ?? undefined,
+    bucketPos: asInt(p.dig_bucket_pos_commanded) ?? asInt(p.bucket_pos) ?? undefined,
     bucketPosMax: asInt(p.bucket_pos_max) ?? undefined,
     bucketVel: asInt(p.bucket_vel) ?? undefined,
     conveyor: asInt(p.conveyor) ?? undefined,
