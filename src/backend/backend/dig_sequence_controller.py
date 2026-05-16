@@ -62,9 +62,8 @@ from backend.dig_sequence_params import (
 )
 from backend.navigation_controller_pure import plan_corridor_step
 
-FIXED_DIG_CYCLES = 3
-PHASE_DELAY_SEC = 5.0
-DIG_BUCKET_POS_MAX = 35
+FIXED_DIG_CYCLES = 8
+DIG_BUCKET_POS_MAX = 50
 
 
 class DigState(Enum):
@@ -73,10 +72,8 @@ class DigState(Enum):
     WAIT_NAV_ARM = 0
     SETUP_IR = 1
     DRIVE_FORWARD = 2
-    PAUSE_BEFORE_BACK = 3
-    DRIVE_BACK = 4
-    PAUSE_BEFORE_FORWARD = 5
-    DONE = 6
+    DRIVE_BACK = 3
+    DONE = 4
 
 
 class DigSequenceController(Node):
@@ -382,9 +379,7 @@ class DigSequenceController(Node):
         if self.state in (
             DigState.SETUP_IR,
             DigState.DRIVE_FORWARD,
-            DigState.PAUSE_BEFORE_BACK,
             DigState.DRIVE_BACK,
-            DigState.PAUSE_BEFORE_FORWARD,
         ):
             self.pub_bucket_vel.publish(Int16(data=int(self.bucket_chain_speed)))
         else:
@@ -401,13 +396,13 @@ class DigSequenceController(Node):
         self._ir_bucket_gate_waiting = False
 
         if self.cycle_counter < FIXED_DIG_CYCLES:
-            self.get_logger().info(f"Waiting {PHASE_DELAY_SEC:.1f}s before next drive-forward phase.")
-            self.state = DigState.PAUSE_BEFORE_FORWARD
+            self.get_logger().info("Repeating drive-forward phase.")
+            self.state = DigState.DRIVE_FORWARD
             self.conveyor_until = None
             self._conveyor_end_applied = True
             self._reset_phase_clock()
         else:
-            self.get_logger().info("Three-cycle dig profile complete; terminating loop.")
+            self.get_logger().info(f"{FIXED_DIG_CYCLES}-cycle dig profile complete; terminating loop.")
             self.keep_bucket_chain_until_done = False
             self._post_dump_bump_pending = False
             self._stop_motion()
@@ -452,25 +447,13 @@ class DigSequenceController(Node):
                 self._tick_setup_ir()
             elif self.state == DigState.DRIVE_FORWARD:
                 self._tick_drive_forward()
-            elif self.state == DigState.PAUSE_BEFORE_BACK:
-                self._tick_phase_delay(DigState.DRIVE_BACK)
             elif self.state == DigState.DRIVE_BACK:
                 self._tick_drive_back()
-            elif self.state == DigState.PAUSE_BEFORE_FORWARD:
-                self._tick_phase_delay(DigState.DRIVE_FORWARD)
 
             self._sync_conveyor_output()
             self._sync_bucket_chain_output()
         finally:
             self._publish_dig_state()
-
-    def _tick_phase_delay(self, next_state: DigState) -> None:
-        self._stop_motion()
-        if self._phase_elapsed() < PHASE_DELAY_SEC:
-            return
-        self.get_logger().info(f"Phase delay complete; entering {next_state.name}.")
-        self.state = next_state
-        self._reset_phase_clock()
 
     def _tick_setup_ir(self) -> None:
         if not self.setup_complete:
@@ -566,8 +549,7 @@ class DigSequenceController(Node):
             if reached:
                 self.get_logger().info(f"Forward phase finished after {self.timed_drive_ms} ms (timed).")
                 self._stop_motion()
-                self.get_logger().info(f"Waiting {PHASE_DELAY_SEC:.1f}s before drive-back phase.")
-                self.state = DigState.PAUSE_BEFORE_BACK
+                self.state = DigState.DRIVE_BACK
                 self._reset_phase_clock()
                 return
         else:
@@ -580,8 +562,7 @@ class DigSequenceController(Node):
             if reached_enc:
                 self.get_logger().info(f"Encoder {self.encoder_value} reached forward target ~{self.calibrated_rotary}.")
                 self._stop_motion()
-                self.get_logger().info(f"Waiting {PHASE_DELAY_SEC:.1f}s before drive-back phase.")
-                self.state = DigState.PAUSE_BEFORE_BACK
+                self.state = DigState.DRIVE_BACK
                 self._reset_phase_clock()
                 return
         allow, detail = self._terrain_gate_forward()

@@ -57,9 +57,7 @@ export type DigSequencePhase =
   | 'WAIT_NAV_ARM'
   | 'SETUP_IR'
   | 'DRIVE_FORWARD'
-  | 'PAUSE_BEFORE_BACK'
   | 'DRIVE_BACK'
-  | 'PAUSE_BEFORE_FORWARD'
   | 'DONE'
 
 export type DigSequenceSnapshot = {
