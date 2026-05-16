@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   ArrowDown,
@@ -342,7 +342,7 @@ function SafetyBar({
   )
 }
 
-function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string | undefined }) {
+const CameraFeed = memo(function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string | undefined }) {
   const { imageRef, hasFrame, socketState, configured } = useCameraFrame(camera, wsBase)
   const tryWs = Boolean(configured)
   const displayStatus = tryWs ? socketState : camera.status
@@ -394,7 +394,7 @@ function CameraFeed({ camera, wsBase }: { camera: CameraStream; wsBase: string |
       <div className="border-t border-slate-800 px-3 py-2 font-mono text-[11px] text-slate-500">{camera.topic}</div>
     </div>
   )
-}
+})
 
 const TERRAIN_PIXEL: Record<'ok' | 'warn' | 'bad' | 'unknown' | 'robot', string> = {
   /** Free / traversable */

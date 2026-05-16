@@ -22,6 +22,8 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | undefined
     let currentUrl: string | null = null
+    let pendingUrl: string | null = null
+    let frameRequest: number | undefined
 
     function revokeCurrent() {
       if (currentUrl) {
@@ -30,12 +32,38 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       }
     }
 
+    function revokePending() {
+      if (pendingUrl) {
+        URL.revokeObjectURL(pendingUrl)
+        pendingUrl = null
+      }
+    }
+
     function clearImage() {
       if (imageRef.current) {
         imageRef.current.removeAttribute('src')
       }
+      if (frameRequest !== undefined) {
+        window.cancelAnimationFrame(frameRequest)
+        frameRequest = undefined
+      }
+      revokePending()
       revokeCurrent()
       setHasFrame(false)
+    }
+
+    function publishPendingFrame() {
+      frameRequest = undefined
+      if (closed || !pendingUrl) return
+      const nextUrl = pendingUrl
+      pendingUrl = null
+      if (imageRef.current) {
+        imageRef.current.src = nextUrl
+      }
+      setSocketState('live')
+      setHasFrame((prev) => (prev ? prev : true))
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+      currentUrl = nextUrl
     }
 
     function connect() {
@@ -43,20 +71,21 @@ export function useCameraFrame(camera: CameraStream, wsBase: string | undefined)
       setSocketState((prev) => (prev === 'live' ? prev : 'connecting'))
       const path = cameraSocketNames[camera.id]
       socket = new WebSocket(`${wsBase}/camera/ws/${path}`)
-      socket.binaryType = 'arraybuffer'
+      socket.binaryType = 'blob'
 
       socket.onmessage = (event) => {
         if (closed) return
-        const buf = event.data as ArrayBuffer
-        const blob = new Blob([buf], { type: 'image/jpeg' })
+        const blob = event.data instanceof Blob
+          ? event.data
+          : new Blob([event.data as ArrayBuffer], { type: 'image/jpeg' })
         const nextUrl = URL.createObjectURL(blob)
-        if (imageRef.current) {
-          imageRef.current.src = nextUrl
+        if (pendingUrl) {
+          URL.revokeObjectURL(pendingUrl)
         }
-        setSocketState('live')
-        setHasFrame((prev) => (prev ? prev : true))
-        if (currentUrl) URL.revokeObjectURL(currentUrl)
-        currentUrl = nextUrl
+        pendingUrl = nextUrl
+        if (frameRequest === undefined) {
+          frameRequest = window.requestAnimationFrame(publishPendingFrame)
+        }
       }
 
       socket.onerror = () => {

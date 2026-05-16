@@ -3,6 +3,7 @@ import type { LogLine, Metric, MissionControlSnapshot, SensorSnapshot, TrendPoin
 import { parseSensorWsPayload, type ParsedSensorMessage } from './sensorWsParse'
 
 const RECONNECT_MS = 500
+const SENSOR_UI_REFRESH_MS = 200
 
 function mergeLogs(snapshotLogs: LogLine[], recent: string[]): LogLine[] {
   if (recent.length === 0) return snapshotLogs
@@ -41,6 +42,33 @@ export function useSensorWebSocket(
     let closed = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let socket: WebSocket | undefined
+    let flushTimer: ReturnType<typeof setTimeout> | undefined
+    let lastFlushAt = 0
+    let pendingPayload: string | null = null
+
+    function flushLatestPayload() {
+      flushTimer = undefined
+      if (closed || pendingPayload === null) return
+      const payload = pendingPayload
+      pendingPayload = null
+      const next = parseSensorWsPayload(payload)
+      if (next) {
+        lastFlushAt = performance.now()
+        setParsed(next)
+      }
+    }
+
+    function scheduleSensorUiUpdate(payload: string) {
+      pendingPayload = payload
+      if (flushTimer !== undefined) return
+      const now = performance.now()
+      const waitMs = Math.max(0, SENSOR_UI_REFRESH_MS - (now - lastFlushAt))
+      if (waitMs === 0) {
+        flushLatestPayload()
+      } else {
+        flushTimer = window.setTimeout(flushLatestPayload, waitMs)
+      }
+    }
 
     function connect() {
       if (closed) return
@@ -52,8 +80,7 @@ export function useSensorWebSocket(
 
       socket.onmessage = (ev) => {
         if (closed || typeof ev.data !== 'string') return
-        const next = parseSensorWsPayload(ev.data)
-        if (next) setParsed(next)
+        scheduleSensorUiUpdate(ev.data)
       }
 
       socket.onerror = () => {
@@ -72,6 +99,7 @@ export function useSensorWebSocket(
     return () => {
       closed = true
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer)
       socket?.close()
     }
   }, [wsBase])
