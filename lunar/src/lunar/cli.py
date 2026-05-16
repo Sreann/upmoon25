@@ -371,8 +371,14 @@ def _force_cleanup_runtime_processes() -> list[str]:
         "[l]unar_camera_ws_bridge",
         "[l]unar_dashboard_bridge",
         "[l]unar_mission_control_bridge",
+        "[l]unar.mission_bridge",
+        "[l]unar.mission_control_serve",
         "[m]ission-control/dist &&",
+        "[m]ission-control.*http.server",
         "[p]npm dev --host .* --port",
+        "[p]npm exec vite preview",
+        "[v]ite preview",
+        "[v]ite .*--host .*--port",
         "[m]ission_bridge",
         "[p]erception_health",
         "[l]ocal_terrain_grid",
@@ -381,6 +387,8 @@ def _force_cleanup_runtime_processes() -> list[str]:
     ]
     for pattern in targeted_patterns:
         subprocess.run(["pkill", "-9", "-f", pattern], stderr=subprocess.DEVNULL)
+
+    msgs.extend(_kill_dashboard_port_listeners([8501, 8767, 8770]))
 
     subprocess.run(
         ["bash", "-c", "source /opt/ros/humble/setup.bash && ros2 daemon stop"],
@@ -393,6 +401,42 @@ def _force_cleanup_runtime_processes() -> list[str]:
         except Exception:
             pass
 
+    return msgs
+
+
+def _kill_dashboard_port_listeners(ports: list[int]) -> list[str]:
+    """Kill orphan dashboard/bridge listeners on the well-known dashboard ports."""
+    msgs: list[str] = []
+    try:
+        import psutil
+    except Exception:
+        return msgs
+
+    current_pgid = os.getpgrp()
+    killed_pgids: set[int] = set()
+    wanted = {int(p) for p in ports}
+    try:
+        conns = psutil.net_connections(kind="inet")
+    except Exception as exc:
+        return [f"could not inspect dashboard ports: {exc}"]
+
+    for conn in conns:
+        if conn.pid is None or conn.status != psutil.CONN_LISTEN:
+            continue
+        if not conn.laddr or int(conn.laddr.port) not in wanted:
+            continue
+        try:
+            pgid = os.getpgid(int(conn.pid))
+        except (ProcessLookupError, PermissionError):
+            continue
+        if pgid == current_pgid or pgid in killed_pgids:
+            continue
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            killed_pgids.add(pgid)
+            msgs.append(f"killed dashboard listener on :{int(conn.laddr.port)} (pid {conn.pid}, pgid {pgid})")
+        except (ProcessLookupError, PermissionError) as exc:
+            msgs.append(f"failed to kill dashboard listener on :{int(conn.laddr.port)} (pid {conn.pid}): {exc}")
     return msgs
 
 
