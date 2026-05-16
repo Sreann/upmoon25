@@ -91,6 +91,8 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
 
     def open(self, camera_name):
         self.camera_name = camera_name or "rgb"
+        self._camera_write_pending = False
+        self._camera_queued_payload = None
         if self.camera_name not in _clients:
             self.close(code=1008, reason="unknown camera")
             return
@@ -98,10 +100,7 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
             _clients[self.camera_name].add(self)
             payload = _latest_frames.get(self.camera_name, b"")
         if payload:
-            try:
-                self.write_message(payload, binary=True)
-            except Exception:
-                self.close()
+            self.send_camera_payload(payload)
 
     def on_close(self):
         with _clients_lock:
@@ -110,6 +109,32 @@ class CameraWebSocketHandler(tornado.websocket.WebSocketHandler):
 
     def on_message(self, message):
         return
+
+    def send_camera_payload(self, payload: bytes) -> None:
+        if not payload or self.ws_connection is None:
+            return
+        if self._camera_write_pending:
+            self._camera_queued_payload = payload
+            return
+        self._camera_write_pending = True
+        try:
+            future = self.write_message(payload, binary=True)
+        except Exception:
+            self.close()
+            return
+        future.add_done_callback(self._camera_write_done)
+
+    def _camera_write_done(self, future) -> None:
+        self._camera_write_pending = False
+        try:
+            future.result()
+        except Exception:
+            self.close()
+            return
+        payload = self._camera_queued_payload
+        self._camera_queued_payload = None
+        if payload and self.ws_connection is not None:
+            self.send_camera_payload(payload)
 
 
 class SensorWebSocketHandler(tornado.websocket.WebSocketHandler):
@@ -140,7 +165,7 @@ def _broadcast(camera_name: str, payload: bytes):
 
     for client in clients:
         try:
-            client.write_message(payload, binary=True)
+            client.send_camera_payload(payload)
         except Exception:
             stale.append(client)
 

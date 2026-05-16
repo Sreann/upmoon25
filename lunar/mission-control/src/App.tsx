@@ -368,7 +368,7 @@ const CameraFeed = memo(function CameraFeed({ camera, wsBase }: { camera: Camera
       <div className="relative aspect-video bg-[radial-gradient(circle_at_40%_35%,#334155,#0f172a_42%,#020617)]">
         <img
           ref={imageRef}
-          className={clsx('h-full w-full object-cover', activeFrame ? 'opacity-100' : 'opacity-0')}
+          className={clsx('h-full w-full object-cover', activeFrame ? 'opacity-100' : 'opacity-0', camera.id === 'rear' && 'rotate-180')}
           alt={`${camera.name} live camera feed`}
         />
         {!activeFrame && displayStatus === 'live' ? (
