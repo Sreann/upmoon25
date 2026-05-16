@@ -2434,40 +2434,37 @@ def _launch_vite_mission_control(
 
     same_origin_env = "VITE_USE_SAME_ORIGIN_WS=1 " if with_robot_stack else ""
     has_pnpm_deps = shutil.which("pnpm") is not None and (app_dir / "node_modules").is_dir()
-    if has_pnpm_deps:
-        if with_robot_stack and dist_index.is_file():
-            vite_cmd = "pnpm exec vite preview"
-        else:
-            vite_cmd = "pnpm dev"
+    if with_robot_stack and dist_index.is_file():
+        py = shlex.quote(sys.executable)
+        dist_q = shlex.quote(str(dist_dir))
+        host_q = shlex.quote(host)
+        serve_mod = (
+            "from lunar.mission_control_serve import main; "
+            f"main({dist_q!r}, port={int(port)}, host={host_q!r})"
+        )
+        cmd = f"{_ros_source_env_chain(root)} && {py} -c {shlex.quote(serve_mod)}"
+        mode = "static (dist/ + WebSocket proxy on :8501)"
+        typer.secho(
+            "Serving mission-control from dist/ with same-origin WebSocket proxy.",
+            fg=typer.colors.CYAN,
+        )
+    elif has_pnpm_deps:
         cmd = (
-            f"cd {shlex.quote(str(app_dir))} && {same_origin_env}{vite_cmd} "
+            f"cd {shlex.quote(str(app_dir))} && {same_origin_env}pnpm dev "
             f"--host {shlex.quote(host)} --port {int(port)}"
         )
-        mode = "preview (pnpm + Vite)" if "preview" in vite_cmd else "dev (pnpm + Vite)"
+        mode = "dev (pnpm + Vite)"
     elif dist_index.is_file():
         py = shlex.quote(sys.executable)
         dist_q = shlex.quote(str(dist_dir))
         host_q = shlex.quote(host)
-        if with_robot_stack:
-            serve_mod = (
-                "from lunar.mission_control_serve import main; "
-                f"main({dist_q!r}, port={int(port)}, host={host_q!r})"
-            )
-            cmd = f"{_ros_source_env_chain(root)} && {py} -c {shlex.quote(serve_mod)}"
-            mode = "static (dist/ + WebSocket proxy on :8501)"
-        elif sys.version_info >= (3, 8):
+        if sys.version_info >= (3, 8):
             cmd = f"cd {dist_q} && {py} -m http.server {int(port)} --bind {host_q}"
             mode = "static (dist/ + http.server)"
         else:
             cmd = f"cd {dist_q} && {py} -m http.server {int(port)}"
             mode = "static (dist/ + http.server)"
-        if with_robot_stack:
-            typer.secho(
-                "Serving mission-control from dist/ with same-origin WebSocket proxy (no pnpm).",
-                fg=typer.colors.CYAN,
-            )
-        else:
-            typer.secho("pnpm not found; serving pre-built mission-control from dist/.", fg=typer.colors.YELLOW)
+        typer.secho("pnpm not found; serving pre-built mission-control from dist/.", fg=typer.colors.YELLOW)
     else:
         typer.secho(
             "Error: pnpm is not installed and mission-control is not built.\n"

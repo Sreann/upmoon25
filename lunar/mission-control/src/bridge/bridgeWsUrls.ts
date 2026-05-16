@@ -1,5 +1,11 @@
 /** True when `lunar dashboard` proxies bridge WebSockets on the dashboard HTTP port. */
 export function sameOriginBridgeWsEnabled(): boolean {
+  if (typeof window !== 'undefined') {
+    const runtimeFlag = (window as typeof window & { __LUNAR_USE_SAME_ORIGIN_WS__?: boolean })
+      .__LUNAR_USE_SAME_ORIGIN_WS__
+    if (runtimeFlag === true) return true
+  }
+
   const flag = import.meta.env.VITE_USE_SAME_ORIGIN_WS
   return flag === '1' || flag === 'true'
 }

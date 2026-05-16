@@ -86,6 +86,26 @@ class _HealthProxyHandler(tornado.web.RequestHandler):
             self.write({"ok": False, "error": str(exc)})
 
 
+class _MissionControlIndexHandler(tornado.web.RequestHandler):
+    """Serve index.html with runtime WebSocket proxy config for prebuilt assets."""
+
+    def initialize(self, dist_dir: str):
+        self._dist_dir = Path(dist_dir)
+
+    async def get(self, path: str = ""):
+        index_path = self._dist_dir / "index.html"
+        try:
+            html = index_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise tornado.web.HTTPError(404)
+
+        runtime_config = "<script>window.__LUNAR_USE_SAME_ORIGIN_WS__=true;</script>"
+        if "__LUNAR_USE_SAME_ORIGIN_WS__" not in html:
+            html = html.replace("<head>", f"<head>{runtime_config}", 1)
+        self.set_header("Content-Type", "text/html; charset=utf-8")
+        self.write(html)
+
+
 def make_app(dist_dir: Path, *, mission_port: int = 8770, camera_port: int = 8767) -> tornado.web.Application:
     dist = str(dist_dir.resolve())
     return tornado.web.Application(
@@ -94,6 +114,7 @@ def make_app(dist_dir: Path, *, mission_port: int = 8770, camera_port: int = 876
             (r"/camera/ws/.*", _BridgeWebSocketProxy, {"upstream_port": camera_port}),
             (r"/sensor/ws", _BridgeWebSocketProxy, {"upstream_port": camera_port}),
             (r"/healthz", _HealthProxyHandler, {"upstream_port": mission_port}),
+            (r"/$", _MissionControlIndexHandler, {"dist_dir": dist}),
             (
                 r"/(.*)",
                 tornado.web.StaticFileHandler,
