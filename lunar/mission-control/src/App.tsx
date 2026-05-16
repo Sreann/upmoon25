@@ -737,6 +737,64 @@ function FallbackDiagnostics({ snapshot }: { snapshot: MissionControlSnapshot })
   )
 }
 
+function fmtNum(value: number | null | undefined, digits = 0): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return value.toFixed(digits)
+}
+
+function TeleopTelemetry({ snapshot }: { snapshot: MissionControlSnapshot }) {
+  const a = snapshot.actuators
+  const s = snapshot.sensors
+  return (
+    <div className="mt-4 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">Drive</div>
+        <div className="mt-1 font-mono text-slate-200">
+          lin={fmtNum(a?.driveLinear, 2)} ang={fmtNum(a?.driveAngular, 2)}
+        </div>
+        <div className="mt-1 text-slate-500">cmd/velocity echo</div>
+      </div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">Servos</div>
+        <div className="mt-1 font-mono text-slate-200">
+          cam={fmtNum(a?.cameraHeight)}% pan={fmtNum(a?.panAngle)}
+        </div>
+        <div className="mt-1 text-slate-500">/cmd/camera_height · /cmd/pan</div>
+      </div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">Mining</div>
+        <div className="mt-1 font-mono text-slate-200">
+          bucket={fmtNum(a?.bucketPos)}% chain={fmtNum(a?.bucketVel)} conv={a?.conveyor ? 'ON' : 'OFF'}
+        </div>
+        <div className="mt-1 text-slate-500">bucket pos / chain / conveyor</div>
+      </div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">IR</div>
+        <div className="mt-1 font-mono text-slate-200">
+          left={fmtNum(s.irLeft)} right={fmtNum(s.irRight)}
+        </div>
+        <div className="mt-1 text-slate-500">/sensor/ir/left · /sensor/ir/right</div>
+      </div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">Encoders</div>
+        <div className="mt-1 font-mono text-slate-200">
+          left={fmtNum(s.encoderLeft)} right={fmtNum(s.encoderRight)}
+        </div>
+        <div className="mt-1 text-slate-500">/sensor/encoder/*</div>
+      </div>
+      <div className="rounded-md border border-slate-800 bg-slate-950/70 p-2">
+        <div className="text-[10px] font-semibold uppercase text-slate-500">Encoder Debug</div>
+        <div className="mt-1 font-mono text-slate-200">
+          pin=({fmtNum(s.encoderPinRight)}/{fmtNum(s.encoderPinLeft)}) dec=({fmtNum(s.encoderDecRight)}/{fmtNum(s.encoderDecLeft)})
+        </div>
+        <div className="mt-1 font-mono text-slate-500">
+          bad=({fmtNum(s.encoderBadRight)}/{fmtNum(s.encoderBadLeft)})
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [scenario, setScenarioState] = useState<DemoScenario>(initialDemoScenario)
   const [commandStatus, setCommandStatus] = useState('No command sent in this session.')
@@ -756,10 +814,13 @@ function App() {
   const sensorOverlay = useSensorWebSocket(cameraWsBase, snapshot)
   const displaySnapshot = useMemo(() => {
     if (!sensorOverlay) return snapshot
+    const overlaySensors = Object.fromEntries(
+      Object.entries(sensorOverlay.sensors).filter(([, value]) => value != null),
+    )
     return {
       ...snapshot,
       trends: sensorOverlay.trends ?? snapshot.trends,
-      sensors: sensorOverlay.sensors,
+      sensors: { ...snapshot.sensors, ...overlaySensors },
       metrics: sensorOverlay.metrics,
       logs: sensorOverlay.logs,
     }
@@ -941,6 +1002,7 @@ function App() {
                 <Button disabled={actuator('conveyor', 'toggle').disabled} title={actuator('conveyor', 'toggle').title} className="col-span-2" onClick={() => void runCommand({ type: 'actuator', target: 'conveyor', action: 'toggle' })}>Conveyor Toggle</Button>
               </div>
             </div>
+            <TeleopTelemetry snapshot={displaySnapshot} />
           </Panel>
 
           <Panel title="Mining Cycle" icon={<Shovel className="h-4 w-4 text-amber-300" />}>

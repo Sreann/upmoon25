@@ -71,6 +71,12 @@ class MissionBridgeState:
     ir_right: int | None = None
     encoder_left: int | None = None
     encoder_right: int | None = None
+    encoder_pin_right: int | None = None
+    encoder_pin_left: int | None = None
+    encoder_dec_right: int | None = None
+    encoder_dec_left: int | None = None
+    encoder_bad_right: int | None = None
+    encoder_bad_left: int | None = None
     point_cloud_points: int = 0
     armed: bool = False
     estop: bool = False
@@ -421,6 +427,21 @@ def build_snapshot() -> Dict[str, Any]:
             "irRight": _state.ir_right,
             "encoderLeft": _state.encoder_left,
             "encoderRight": _state.encoder_right,
+            "encoderPinRight": _state.encoder_pin_right,
+            "encoderPinLeft": _state.encoder_pin_left,
+            "encoderDecRight": _state.encoder_dec_right,
+            "encoderDecLeft": _state.encoder_dec_left,
+            "encoderBadRight": _state.encoder_bad_right,
+            "encoderBadLeft": _state.encoder_bad_left,
+        },
+        "actuators": {
+            "driveLinear": _state.baseline_vel,
+            "driveAngular": _state.angular_vel,
+            "cameraHeight": _state.camera_height,
+            "panAngle": _state.pan_angle,
+            "bucketPos": _state.bucket_pos,
+            "bucketVel": _state.bucket_vel,
+            "conveyor": _state.conveyor,
         },
         "pid": {"kp": 1.0, "ki": 0.0, "kd": 0.1},
         "audit": [
@@ -562,9 +583,9 @@ def _run_ros_node() -> None:
     from rclpy.node import Node
     from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
     from sensor_msgs.msg import CompressedImage, PointCloud2
-    from std_msgs.msg import Bool, Float32, Int16, Int32, String
+    from std_msgs.msg import Bool, Float32, Int16, Int32, Int32MultiArray, String
 
-    from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, clamp_pan_angle
+    from lunar.keyboard_topics import KEYBOARD_PUBLISHER_TOPICS, KEYBOARD_SENSOR_TOPICS, clamp_pan_angle
 
     class MissionBridgeNode(Node):
         def __init__(self):
@@ -596,6 +617,12 @@ def _run_ros_node() -> None:
             self.create_subscription(Int16, "/sensor/ir/right", self.ir_right_cb, 10)
             self.create_subscription(Int32, "/sensor/encoder/left", self.encoder_left_cb, 10)
             self.create_subscription(Int32, "/sensor/encoder/right", self.encoder_right_cb, 10)
+            self.create_subscription(Int32MultiArray, KEYBOARD_SENSOR_TOPICS["encoder_telemetry"], self.encoder_telemetry_cb, 10)
+            self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["camera-height"], self.camera_height_cmd_cb, 10)
+            self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["pan"], self.pan_cmd_cb, 10)
+            self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-pos"], self.bucket_pos_cmd_cb, 10)
+            self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["bucket-vel"], self.bucket_vel_cmd_cb, 10)
+            self.create_subscription(Int16, KEYBOARD_PUBLISHER_TOPICS["conveyor"], self.conveyor_cmd_cb, 10)
             self.create_subscription(Log, "/rosout", self.log_cb, 10)
             self.create_subscription(OccupancyGrid, "/autonomy/local_terrain_grid", self.terrain_grid_cb, 10)
             self.create_subscription(String, "/autonomy/terrain_status", self.terrain_status_cb, 10)
@@ -956,6 +983,7 @@ def _run_ros_node() -> None:
 
         def cmd_vel_cb(self, msg):
             _state.baseline_vel = float(msg.linear.x)
+            _state.angular_vel = float(msg.angular.z)
             _state.touch_topic("cmd/velocity")
             _schedule_snapshot()
 
@@ -974,6 +1002,38 @@ def _run_ros_node() -> None:
 
         def encoder_right_cb(self, msg):
             _state.encoder_right = int(msg.data)
+
+        def encoder_telemetry_cb(self, msg):
+            data = [int(v) for v in msg.data]
+            if len(data) < 6:
+                return
+            _state.encoder_pin_right = data[0]
+            _state.encoder_pin_left = data[1]
+            _state.encoder_dec_right = data[2]
+            _state.encoder_dec_left = data[3]
+            _state.encoder_bad_right = data[4]
+            _state.encoder_bad_left = data[5]
+            _schedule_snapshot()
+
+        def camera_height_cmd_cb(self, msg):
+            _state.camera_height = int(msg.data)
+            _schedule_snapshot()
+
+        def pan_cmd_cb(self, msg):
+            _state.pan_angle = int(msg.data)
+            _schedule_snapshot()
+
+        def bucket_pos_cmd_cb(self, msg):
+            _state.bucket_pos = int(msg.data)
+            _schedule_snapshot()
+
+        def bucket_vel_cmd_cb(self, msg):
+            _state.bucket_vel = int(msg.data)
+            _schedule_snapshot()
+
+        def conveyor_cmd_cb(self, msg):
+            _state.conveyor = int(msg.data)
+            _schedule_snapshot()
 
         def terrain_status_cb(self, msg):
             _state.terrain_status = _parse_json_message(msg.data)

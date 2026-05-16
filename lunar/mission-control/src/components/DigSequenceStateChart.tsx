@@ -5,17 +5,28 @@ const PIPELINE_WITH_ARM: DigSequencePhase[] = [
   'WAIT_NAV_ARM',
   'SETUP_IR',
   'DRIVE_FORWARD',
+  'PAUSE_BEFORE_BACK',
   'DRIVE_BACK',
+  'PAUSE_BEFORE_FORWARD',
   'DONE',
 ]
 
-const PIPELINE_NO_ARM: DigSequencePhase[] = ['SETUP_IR', 'DRIVE_FORWARD', 'DRIVE_BACK', 'DONE']
+const PIPELINE_NO_ARM: DigSequencePhase[] = [
+  'SETUP_IR',
+  'DRIVE_FORWARD',
+  'PAUSE_BEFORE_BACK',
+  'DRIVE_BACK',
+  'PAUSE_BEFORE_FORWARD',
+  'DONE',
+]
 
 const SHORT_LABEL: Record<DigSequencePhase, string> = {
   WAIT_NAV_ARM: 'NAV',
   SETUP_IR: 'IR',
   DRIVE_FORWARD: 'FWD',
+  PAUSE_BEFORE_BACK: 'P-BK',
   DRIVE_BACK: 'BACK',
+  PAUSE_BEFORE_FORWARD: 'P-FW',
   DONE: 'OK',
 }
 
@@ -42,7 +53,9 @@ function isDigSequencePhase(s: string): s is DigSequencePhase {
     s === 'WAIT_NAV_ARM' ||
     s === 'SETUP_IR' ||
     s === 'DRIVE_FORWARD' ||
+    s === 'PAUSE_BEFORE_BACK' ||
     s === 'DRIVE_BACK' ||
+    s === 'PAUSE_BEFORE_FORWARD' ||
     s === 'DONE'
   )
 }

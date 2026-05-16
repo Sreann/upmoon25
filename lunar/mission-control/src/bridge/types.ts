@@ -57,7 +57,9 @@ export type DigSequencePhase =
   | 'WAIT_NAV_ARM'
   | 'SETUP_IR'
   | 'DRIVE_FORWARD'
+  | 'PAUSE_BEFORE_BACK'
   | 'DRIVE_BACK'
+  | 'PAUSE_BEFORE_FORWARD'
   | 'DONE'
 
 export type DigSequenceSnapshot = {
@@ -192,6 +194,22 @@ export type SensorSnapshot = {
   irRight: number | null
   encoderLeft: number | null
   encoderRight: number | null
+  encoderPinRight?: number | null
+  encoderPinLeft?: number | null
+  encoderDecRight?: number | null
+  encoderDecLeft?: number | null
+  encoderBadRight?: number | null
+  encoderBadLeft?: number | null
+}
+
+export type ActuatorSnapshot = {
+  driveLinear: number
+  driveAngular: number
+  cameraHeight: number
+  panAngle: number
+  bucketPos: number
+  bucketVel: number
+  conveyor: number
 }
 
 export type PidGains = {
@@ -232,6 +250,7 @@ export type MissionControlSnapshot = {
   logs: LogLine[]
   trends: TrendPoint[]
   sensors: SensorSnapshot
+  actuators?: ActuatorSnapshot
   pid: PidGains
   audit: AuditItem[]
   terrainGrid?: TerrainGridSnapshot
