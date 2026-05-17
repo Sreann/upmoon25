@@ -109,8 +109,8 @@ dashboard:
 	docker exec -it upmoon25_ros lunar dashboard
 
 streamlit-dashboard:
-	docker compose up -d ros
-	docker compose exec ros lunar streamlit-dashboard
+	docker start upmoon25_ros
+	docker exec -it upmoon25_ros lunar streamlit-dashboard
 
 mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
