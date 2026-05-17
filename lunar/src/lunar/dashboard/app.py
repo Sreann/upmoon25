@@ -180,7 +180,15 @@ def _render_camera_frame(camera_jpeg: bytes, frame: np.ndarray, caption: str) ->
     )
 
 
-def _render_camera_stream(caption: str, camera_name: str, *, stream_port: int = 8767, height: int = 430) -> None:
+def _render_camera_stream(
+    caption: str,
+    camera_name: str,
+    *,
+    stream_port: int = 8767,
+    height: int = 430,
+    rotate_degrees: int = 0,
+) -> None:
+    transform_style = f"transform:rotate({int(rotate_degrees)}deg);" if rotate_degrees else ""
     components.html(
         f"""
         <div style="margin:0">
@@ -188,7 +196,7 @@ def _render_camera_stream(caption: str, camera_name: str, *, stream_port: int = 
             <img
               id="lunar-camera-stream"
               alt="{caption}"
-              style="position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;"
+              style="position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;{transform_style}"
             />
             <div
               id="lunar-camera-empty"
@@ -364,7 +372,7 @@ def _render_camera_panel():
     with tab_rgb:
         _render_camera_stream("Front D435 RGB", "rgb", height=520)
     with tab_rear:
-        _render_camera_stream("Rear D435 RGB", "rear", height=520)
+        _render_camera_stream("Rear D435 RGB", "rear", height=520, rotate_degrees=180)
 
 
 @_fragment(run_every=UI_REFRESH_SEC)
