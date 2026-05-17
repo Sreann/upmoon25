@@ -362,13 +362,15 @@ const CameraFeed = memo(function CameraFeed({ camera, wsBase }: { camera: Camera
     unknown: 'Camera has not been checked in this session',
   }[displayStatus]
   const accent = camera.id === 'front' ? 'border-orange-300' : camera.id === 'rear' ? 'border-sky-300' : 'border-slate-400'
+  const imageStyle = camera.id === 'rear' ? { transform: 'rotate(180deg)' } : undefined
 
   return (
     <div className="overflow-hidden rounded-md border border-slate-800 bg-slate-900">
       <div className="relative aspect-video bg-[radial-gradient(circle_at_40%_35%,#334155,#0f172a_42%,#020617)]">
         <img
           ref={imageRef}
-          className={clsx('h-full w-full object-cover', activeFrame ? 'opacity-100' : 'opacity-0', camera.id === 'rear' && 'rotate-180')}
+          className={clsx('h-full w-full object-cover', activeFrame ? 'opacity-100' : 'opacity-0')}
+          style={imageStyle}
           alt={`${camera.name} live camera feed`}
         />
         {!activeFrame && displayStatus === 'live' ? (
