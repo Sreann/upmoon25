@@ -52,7 +52,7 @@ help:
 	@echo "  make shell    - Enter the container's shell"
 	@echo "  make sim world=gz_worlds/basic.world - Start simulation"
 	@echo "  make dashboard - Launch React mission-control in the container (default port 8501)"
-	@echo "  make streamlit-dashboard - Launch legacy Streamlit command center"
+	@echo "  make streamlit-dashboard - Launch legacy Streamlit command center on this host"
 	@echo "  make tune-flags input=... output=... - Batch flag detection on images (no ROS; defaults field_photos/in out)"
 	@echo "  make mission-bridge - Launch the safe-command mission-control ROS bridge"
 	@echo "  make mission-control - Launch the new web mission-control app"
@@ -109,7 +109,7 @@ dashboard:
 	docker exec -it upmoon25_ros lunar dashboard
 
 streamlit-dashboard:
-	docker exec -it upmoon25_ros lunar streamlit-dashboard
+	cd "$(ROOT)/lunar" && uv run --offline lunar streamlit-dashboard
 
 mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
