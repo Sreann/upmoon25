@@ -799,7 +799,7 @@ def _run_terminal_subsystem_keyboard(
     typer.echo("q/Ctrl-C exit, space stop transient actuators, ? help")
     typer.echo("camera height: u/j up/down, 0 min, 1 max")
     if "pan" in subsystems:
-        typer.echo("pan: h/l left/right, m center")
+        typer.echo("pan: h/l right/left, m center")
     if "bucket-pos" in subsystems:
         typer.echo("bucket position: i/k coarse (±step) | I/K fine (±1)")
     if "bucket-vel" in subsystems:
@@ -833,9 +833,9 @@ def _run_terminal_subsystem_keyboard(
                     elif "camera-height" in subsystems and key == "1":
                         set_camera_height(100)
                     elif "pan" in subsystems and key == "h":
-                        set_pan(pan - step)
-                    elif "pan" in subsystems and key == "l":
                         set_pan(pan + step)
+                    elif "pan" in subsystems and key == "l":
+                        set_pan(pan - step)
                     elif "pan" in subsystems and key == "m":
                         set_pan(90)
                     elif "bucket-pos" in subsystems and key == "i":

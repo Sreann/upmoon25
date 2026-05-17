@@ -413,7 +413,7 @@ def run_keyboard_tui(
                 yield Static("", id="warn", classes="line")
                 yield Static("COMMANDS", classes="section")
                 yield Static("DRIVE: W fwd | S rev | A left | D right | SPACE stop | Q quit", classes="line")
-                yield Static("SERVOS: U/J cam height | 0/1 min/max | H/L pan angle | M center", classes="line")
+                yield Static("SERVOS: U/J cam height | 0/1 min/max | H/L pan right/left | M center", classes="line")
                 yield Static(
                     "MINING: I/K bucket pos (coarse, same step as U/J) | Shift+I/Shift+K ±1 | R/F chain | C conveyor",
                     classes="line",
@@ -755,9 +755,9 @@ def run_keyboard_tui(
                 "down": self.action_height_down,
                 "0": self.action_height_min,
                 "1": self.action_height_max,
-                "h": self.action_pan_left,
+                "h": self.action_pan_right,
                 "left": self.action_pan_left,
-                "l": self.action_pan_right,
+                "l": self.action_pan_left,
                 "right": self.action_pan_right,
                 "m": self.action_pan_center,
                 "i": self.action_bucket_up,
