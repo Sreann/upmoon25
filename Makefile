@@ -39,7 +39,7 @@ output ?= field_photos/out
 # Prefer global/Corepack `pnpm`; otherwise bootstrap pinned pnpm via npx (no global install needed).
 MISSION_PNPM := $(if $(shell command -v pnpm 2>/dev/null),pnpm,npx --yes pnpm@9)
 
-.PHONY: build up down restart shell sim dashboard mission-bridge mission-control mission-control-demo mission-control-demo-copy mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-firmware test-offline ci tune-flags run kill logs lunar-logs-pack lunar-logs-path check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
+.PHONY: build up down restart shell sim dashboard streamlit-dashboard mission-bridge mission-control mission-control-demo mission-control-demo-copy mission-control-install mission-control-build mission-control-offline-prep autonomy-stack lint test test-firmware test-offline ci tune-flags run kill logs lunar-logs-pack lunar-logs-path check monitor keyboard config shell-env ros-shell install deploy deploy-dry-run help
 
 help:
 	@echo "upmoon25-auto Docker Management"
@@ -52,6 +52,7 @@ help:
 	@echo "  make shell    - Enter the container's shell"
 	@echo "  make sim world=gz_worlds/basic.world - Start simulation"
 	@echo "  make dashboard - Launch React mission-control in the container (default port 8501)"
+	@echo "  make streamlit-dashboard - Launch legacy Streamlit command center in the container"
 	@echo "  make tune-flags input=... output=... - Batch flag detection on images (no ROS; defaults field_photos/in out)"
 	@echo "  make mission-bridge - Launch the safe-command mission-control ROS bridge"
 	@echo "  make mission-control - Launch the new web mission-control app"
@@ -106,6 +107,9 @@ sim:
 
 dashboard:
 	docker exec -it upmoon25_ros lunar dashboard
+
+streamlit-dashboard:
+	docker exec -it upmoon25_ros lunar streamlit-dashboard
 
 mission-bridge:
 	docker exec -it upmoon25_ros lunar mission-bridge --foreground
