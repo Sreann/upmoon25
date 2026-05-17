@@ -62,7 +62,7 @@ from backend.dig_sequence_params import (
 )
 from backend.navigation_controller_pure import plan_corridor_step
 
-FIXED_DIG_CYCLES = 8
+DEFAULT_DIG_CYCLES = 8
 DIG_BUCKET_POS_MAX = 50
 
 
@@ -92,7 +92,7 @@ class DigSequenceController(Node):
         self.declare_parameter("bucket_start_pos", 20)
         self.declare_parameter("bucket_safety_stop", DIG_BUCKET_POS_MAX)
         self.declare_parameter("bucket_chain_speed", 40)
-        self.declare_parameter("max_cycles_le", FIXED_DIG_CYCLES)
+        self.declare_parameter("max_cycles_le", DEFAULT_DIG_CYCLES)
         self.declare_parameter("forward_linear", 35.0)
         self.declare_parameter("backward_linear", -35.0)
         self.declare_parameter("control_dt", 0.05)
@@ -142,10 +142,10 @@ class DigSequenceController(Node):
             )
         self.bucket_chain_speed = int(self.get_parameter("bucket_chain_speed").value)
         raw_max_cycles = int(self.get_parameter("max_cycles_le").value)
-        self.max_cycles_le = FIXED_DIG_CYCLES
-        if raw_max_cycles != FIXED_DIG_CYCLES:
+        self.max_cycles_le = max(1, min(100, raw_max_cycles))
+        if raw_max_cycles != self.max_cycles_le:
             self.get_logger().warn(
-                f"Ignoring max_cycles_le:={raw_max_cycles}; simplified dig profile always runs {FIXED_DIG_CYCLES} cycles."
+                f"Clamped max_cycles_le:={raw_max_cycles} to {self.max_cycles_le}; valid range is 1..100."
             )
         self.forward_linear = float(self.get_parameter("forward_linear").value)
         self.backward_linear = float(self.get_parameter("backward_linear").value)
@@ -395,14 +395,14 @@ class DigSequenceController(Node):
         self._post_dump_bump_pending = False
         self._ir_bucket_gate_waiting = False
 
-        if self.cycle_counter < FIXED_DIG_CYCLES:
+        if self.cycle_counter < self.max_cycles_le:
             self.get_logger().info("Repeating drive-forward phase.")
             self.state = DigState.DRIVE_FORWARD
             self.conveyor_until = None
             self._conveyor_end_applied = True
             self._reset_phase_clock()
         else:
-            self.get_logger().info(f"{FIXED_DIG_CYCLES}-cycle dig profile complete; terminating loop.")
+            self.get_logger().info(f"{self.max_cycles_le}-cycle dig profile complete; terminating loop.")
             self.keep_bucket_chain_until_done = False
             self._post_dump_bump_pending = False
             self._stop_motion()

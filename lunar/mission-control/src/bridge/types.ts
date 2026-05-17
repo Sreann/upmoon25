@@ -271,7 +271,7 @@ export type RobotCommand =
   | { type: 'resume_autonomy' }
   | { type: 'manual_takeover' }
   | { type: 'drive'; command: DriveCommand; speedLimit: number }
-  | { type: 'payload'; command: PayloadCommand }
+  | { type: 'payload'; command: PayloadCommand; cycles?: number }
   | { type: 'mark_zone'; zone: FieldZone['id']; pick?: { frameId: 'base_link'; x: number; y: number } }
   | { type: 'set_navigation_active'; active: boolean }
   | { type: 'actuator'; target: ActuatorTarget; action: ActuatorAction; step?: number }

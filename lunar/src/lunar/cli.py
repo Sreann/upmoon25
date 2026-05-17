@@ -1080,6 +1080,13 @@ def run(
         "--encoder-side",
         help="dig / nav-dig: Subscribe to /sensor/encoder/left or right.",
     ),
+    dig_cycles: int = typer.Option(
+        8,
+        "--dig-cycles",
+        min=1,
+        max=100,
+        help="dig / nav-dig: Number of forward/back dig cycles to run.",
+    ),
     grid_preset: str = typer.Option(
         "standard",
         "--grid-preset",
@@ -1161,6 +1168,7 @@ def run(
             dig_cmd_suffix = (
                 f"-p calibrated_rotary:={fwd_val} -p encoder_side:={shlex.quote(side)}"
             )
+        dig_cmd_suffix = f"{dig_cmd_suffix} -p max_cycles_le:={int(dig_cycles)}"
         cmds.append(
             (
                 "dig_sequence",
@@ -1194,6 +1202,7 @@ def run(
             dig_cmd_list.extend(["-p", f"timed_drive_ms:={fwd_val}"])
         else:
             dig_cmd_list.extend(["-p", f"calibrated_rotary:={fwd_val}", "-p", f"encoder_side:={side}"])
+        dig_cmd_list.extend(["-p", f"max_cycles_le:={int(dig_cycles)}"])
         dig_shell_cmd = " ".join(shlex.quote(x) for x in dig_cmd_list)
 
         if dry_run:

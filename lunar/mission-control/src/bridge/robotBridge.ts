@@ -72,7 +72,10 @@ export class MockRobotBridge implements RobotBridge {
     if (command.type === 'payload') {
       return {
         accepted: false,
-        message: 'Payload macros are mock-only demos; use lunar run dig / nav-dig on the robot.',
+        message:
+          command.command === 'dig_start' && command.cycles
+            ? `Payload macros are mock-only demos; use lunar run dig / nav-dig --dig-cycles ${command.cycles} on the robot.`
+            : 'Payload macros are mock-only demos; use lunar run dig / nav-dig on the robot.',
       }
     }
 

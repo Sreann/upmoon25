@@ -803,6 +803,7 @@ function App() {
   const [mapName, setMapName] = useState('lunar_field')
   const [pid, setPid] = useState({ kp: 1.0, ki: 0.0, kd: 0.1 })
   const [zoneArm, setZoneArm] = useState<FieldZone['id'] | null>(null)
+  const [digCycles, setDigCycles] = useState(8)
 
   function setScenario(next: DemoScenario) {
     setZoneArm(null)
@@ -1012,9 +1013,30 @@ function App() {
 
           <Panel title="Mining Cycle" icon={<Shovel className="h-4 w-4 text-amber-300" />}>
             <div className="grid gap-2">
-              <MetricCard metric={{ label: 'Macro', value: 'none', detail: 'payload idle', status: 'idle' }} />
+              <MetricCard
+                metric={{
+                  label: 'Dig cycles',
+                  value: String(displaySnapshot.mission.digSequence?.maxCyclesLe ?? digCycles),
+                  detail: displaySnapshot.mission.digSequence?.phase ?? 'requested',
+                  status: displaySnapshot.mission.digSequence ? 'ok' : 'idle',
+                }}
+              />
+              <label className="text-xs text-slate-500">Dig cycles</label>
+              <input
+                className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm disabled:opacity-40"
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                value={digCycles}
+                disabled={motionDisabled}
+                onChange={(event) => {
+                  const next = Math.trunc(Number(event.target.value))
+                  setDigCycles(Number.isFinite(next) ? Math.max(1, Math.min(100, next)) : 8)
+                }}
+              />
               <div className="grid grid-cols-2 gap-2">
-                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start' }).title} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dig_start' })}>Start Dig</Button>
+                <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start', cycles: digCycles }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_start', cycles: digCycles }).title} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dig_start', cycles: digCycles })}>Start Dig</Button>
                 <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_stop' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dig_stop' }).title} onClick={() => void runCommand({ type: 'payload', command: 'dig_stop' })}>Stop Dig</Button>
                 <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_start' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_start' }).title} intent="safe" onClick={() => void runCommand({ type: 'payload', command: 'dump_start' })}>Start Dump</Button>
                 <Button disabled={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_stop' }).disabled} title={commandButtonState(mode, displaySnapshot.mission.connected, { type: 'payload', command: 'dump_stop' }).title} onClick={() => void runCommand({ type: 'payload', command: 'dump_stop' })}>Stop Dump</Button>
